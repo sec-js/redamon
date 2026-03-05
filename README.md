@@ -37,6 +37,7 @@
   <img src="https://img.shields.io/badge/CypherFix-Auto%20Remediation-00B894?style=for-the-badge" alt="CypherFix Auto Remediation"/>
   <br/>
   <a href="https://github.com/samugit83/redamon/wiki"><img src="https://img.shields.io/badge/📖_WIKI-FULL%20DOCUMENTATION-1A73E8?style=for-the-badge" alt="Wiki Documentation"/></a>
+  <a href="https://github.com/users/samugit83/projects/1"><img src="https://img.shields.io/badge/📋_ROADMAP-CONTRIBUTE-00C853?style=for-the-badge" alt="Roadmap & Contribute"/></a>
 </p>
 
 > **LEGAL DISCLAIMER**: This tool is intended for **authorized security testing**, **educational purposes**, and **research only**. Never use this system to scan, probe, or attack any system you do not own or have explicit written permission to test. Unauthorized access is **illegal** and punishable by law. By using this tool, you accept **full responsibility** for your actions. **[Read Full Disclaimer](DISCLAIMER.md)**
@@ -63,6 +64,34 @@ RedAmon doesn't stop at finding vulnerabilities, it fixes them. The pipeline sta
 <p align="center">
 <img src="assets/cypherfix.gif" alt="CypherFix demo" width="100%"/>
 </p>
+
+---
+
+## Roadmap & Community Contributions
+
+We maintain a public **[Project Board](https://github.com/users/samugit83/projects/1)** with upcoming features open for community contributions. Pick a task and submit a PR!
+
+| Feature | Status | Issue |
+|---------|--------|-------|
+| AI-Generated Pentest Reports | Partial | [#37](https://github.com/samugit83/redamon/issues/37) |
+| Continuous Attack Surface Monitoring | New | [#38](https://github.com/samugit83/redamon/issues/38) |
+| Attack Path Kill Chain Visualization | Partial | [#39](https://github.com/samugit83/redamon/issues/39) |
+| Cloud Security Assessment | Partial | [#40](https://github.com/samugit83/redamon/issues/40) |
+| Dark Web & Leaked Creds Monitor | New | [#41](https://github.com/samugit83/redamon/issues/41) |
+| Compliance Framework Mapping | New | [#42](https://github.com/samugit83/redamon/issues/42) |
+| API Security & GraphQL Fuzzing | Partial | [#43](https://github.com/samugit83/redamon/issues/43) |
+| Attack Path: Active Directory Chain | New | [#44](https://github.com/samugit83/redamon/issues/44) |
+| Attack Path: Web Application Chain | New | [#45](https://github.com/samugit83/redamon/issues/45) |
+| Attack Path: Credential Capture & MITM | New | [#46](https://github.com/samugit83/redamon/issues/46) |
+| Attack Path: Local Privilege Escalation | New | [#47](https://github.com/samugit83/redamon/issues/47) |
+| Attack Path: Client-Side Browser Exploitation | New | [#48](https://github.com/samugit83/redamon/issues/48) |
+| Agent Tool Expansion (Shodan, Dorking, Python, Memory) | New | [#49](https://github.com/samugit83/redamon/issues/49) |
+| Agent Intelligence: Hierarchical Planning | New | [#50](https://github.com/samugit83/redamon/issues/50) |
+| Agent Intelligence: Reflexion & Episodic Memory | New | [#51](https://github.com/samugit83/redamon/issues/51) |
+| Agent Intelligence: Metacognitive Monitoring | New | [#52](https://github.com/samugit83/redamon/issues/52) |
+| Agent Intelligence: RAG Pentesting Knowledge Base | New | [#53](https://github.com/samugit83/redamon/issues/53) |
+
+> **Want to contribute?** See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started.
 
 ---
 
