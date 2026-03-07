@@ -42,7 +42,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       )
     }
 
-    return NextResponse.json(project)
+    // Exclude binary document data from regular responses (use /roe/download instead)
+    const { roeDocumentData: _binary, ...projectWithoutBinary } = project
+    return NextResponse.json(projectWithoutBinary)
   } catch (error) {
     console.error('Failed to fetch project:', error)
     return NextResponse.json(
@@ -66,7 +68,9 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       data: updateData
     })
 
-    return NextResponse.json(project)
+    // Exclude binary document data from response (same as GET)
+    const { roeDocumentData: _binary, ...projectWithoutBinary } = project
+    return NextResponse.json(projectWithoutBinary)
   } catch (error: unknown) {
     console.error('Failed to update project:', error)
 

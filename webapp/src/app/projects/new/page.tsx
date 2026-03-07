@@ -14,7 +14,7 @@ export default function NewProjectPage() {
   const { userId, setCurrentProject } = useProject()
   const createProjectMutation = useCreateProject()
 
-  const handleSubmit = async (data: ProjectFormData) => {
+  const handleSubmit = async (data: ProjectFormData & { roeFile?: File | null }) => {
     if (!userId) {
       alert('Please select a user first')
       router.push('/projects')
@@ -22,11 +22,13 @@ export default function NewProjectPage() {
     }
 
     try {
+      const { roeFile, ...projectData } = data
       const project = await createProjectMutation.mutateAsync({
-        ...data,
+        ...projectData,
         userId,
-        name: data.name,
-        targetDomain: data.targetDomain
+        name: projectData.name,
+        targetDomain: projectData.targetDomain,
+        roeFile,
       })
 
       setCurrentProject({

@@ -61,6 +61,54 @@ from recon.add_mitre import run_mitre_enrichment
 OUTPUT_DIR = Path(__file__).parent / "output"
 
 
+def _is_roe_excluded(host: str, excluded_list: list) -> bool:
+    """Check if a host (IP or domain) matches any RoE exclusion entry.
+
+    Supports:
+    - Exact IP/domain match: "10.0.0.5" matches "10.0.0.5"
+    - CIDR match: "10.0.0.5" matches "10.0.0.0/24"
+    - Subdomain match: "payments.example.com" matches "payments.example.com"
+    """
+    import ipaddress as _ipaddress
+
+    for entry in excluded_list:
+        entry = entry.strip()
+        if not entry:
+            continue
+        # Exact string match (works for both IPs and domains)
+        if host == entry:
+            return True
+        # CIDR match: check if host IP falls within an excluded network
+        if '/' in entry:
+            try:
+                network = _ipaddress.ip_network(entry, strict=False)
+                try:
+                    if _ipaddress.ip_address(host) in network:
+                        return True
+                except ValueError:
+                    pass  # host is a domain, not an IP — skip CIDR check
+            except ValueError:
+                pass  # invalid CIDR in exclusion list
+        # Domain suffix match: "payments.example.com" should be excluded
+        # if the exclusion is a parent domain pattern
+        elif host.endswith('.' + entry):
+            return True
+    return False
+
+
+def _filter_roe_excluded(hosts: list, settings: dict, label: str = "host") -> list:
+    """Filter a list of hosts/IPs against ROE_EXCLUDED_HOSTS. Returns the filtered list."""
+    roe_excluded = settings.get('ROE_EXCLUDED_HOSTS', [])
+    if not settings.get('ROE_ENABLED', False) or not roe_excluded:
+        return hosts
+    before_count = len(hosts)
+    filtered = [h for h in hosts if not _is_roe_excluded(h, roe_excluded)]
+    removed = before_count - len(filtered)
+    if removed:
+        print(f"[RoE] Excluded {removed} {label}(s) per Rules of Engagement")
+    return filtered
+
+
 def should_skip_active_scans(recon_data: dict) -> tuple:
     """
     Check if active scanning modules (resource_enum, vuln_scan) should be skipped.
@@ -220,6 +268,9 @@ def run_ip_recon(target_ips: list, settings: dict) -> dict:
 
     expanded_ips = list(dict.fromkeys(expanded_ips))  # deduplicate preserving order
     print(f"[*] Expanded {len(target_ips)} entries to {len(expanded_ips)} individual IPs")
+
+    # RoE: filter out excluded hosts (supports exact match + CIDR)
+    expanded_ips = _filter_roe_excluded(expanded_ips, settings, label="IP")
 
     # Step 2: Reverse DNS for each IP
     print(f"\n[PHASE 1] Reverse DNS Lookup")
@@ -579,8 +630,11 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
             save_output=False
         )
 
-        combined_result["subdomains"] = recon_result.get("subdomains", [])
-        combined_result["subdomain_count"] = recon_result.get("subdomain_count", 0)
+        discovered_subs = recon_result.get("subdomains", [])
+        # RoE: filter dynamically discovered subdomains against exclusion list
+        discovered_subs = _filter_roe_excluded(discovered_subs, _settings, label="discovered subdomain")
+        combined_result["subdomains"] = discovered_subs
+        combined_result["subdomain_count"] = len(discovered_subs)
         combined_result["metadata"]["modules_executed"].append("subdomain_discovery")
         save_recon_file(combined_result, output_file)
         print(f"[+] Saved: {output_file}")
@@ -879,6 +933,10 @@ def main():
     filtered_mode = target_info["filtered_mode"]
     root_domain = target_info["root_domain"]
     full_subdomains = target_info["full_subdomains"]
+
+    # RoE: filter out excluded hosts from subdomains
+    full_subdomains = _filter_roe_excluded(full_subdomains, _settings, label="subdomain")
+    target_info["full_subdomains"] = full_subdomains
 
     # Display full configuration (values loaded from DB/API)
     print("═" * 63)

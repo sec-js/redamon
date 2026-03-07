@@ -136,7 +136,12 @@ export async function POST(request: NextRequest) {
     const projectData = JSON.parse(await projectFile.async('text'))
 
     // Strip fields that will be regenerated
-    const { id: _oldProjectId, userId: _oldUserId, createdAt: _pc, updatedAt: _pu, user: _u, ...projectFields } = projectData
+    const { id: _oldProjectId, userId: _oldUserId, createdAt: _pc, updatedAt: _pu, user: _u, roeDocumentDataBase64, ...projectFields } = projectData
+
+    // Restore binary RoE document from base64 encoding
+    if (roeDocumentDataBase64 && typeof roeDocumentDataBase64 === 'string') {
+      projectFields.roeDocumentData = Buffer.from(roeDocumentDataBase64, 'base64')
+    }
 
     // Check for domain/subdomain conflicts with existing projects (same logic as check-conflict route)
     const targetDomain = (projectFields.targetDomain || '').toLowerCase().trim()

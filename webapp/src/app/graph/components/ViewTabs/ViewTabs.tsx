@@ -1,10 +1,10 @@
 'use client'
 
 import { memo } from 'react'
-import { Waypoints, Table2, Terminal, Search, Download } from 'lucide-react'
+import { Waypoints, Table2, Terminal, Shield, Search, Download } from 'lucide-react'
 import styles from './ViewTabs.module.css'
 
-export type ViewMode = 'graph' | 'table' | 'sessions'
+export type ViewMode = 'graph' | 'table' | 'sessions' | 'roe'
 
 export interface TunnelInfo {
   active: boolean
@@ -76,6 +76,15 @@ export const ViewTabs = memo(function ViewTabs({
           {sessionCount != null && sessionCount > 0 && (
             <span className={styles.badge}>{sessionCount}</span>
           )}
+        </button>
+        <button
+          role="tab"
+          aria-selected={activeView === 'roe'}
+          className={`${styles.tab} ${activeView === 'roe' ? styles.tabActive : ''}`}
+          onClick={() => onViewChange('roe')}
+        >
+          <Shield size={14} />
+          <span>RoE</span>
         </button>
       </div>
 

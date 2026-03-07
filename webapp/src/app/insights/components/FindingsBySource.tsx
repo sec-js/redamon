@@ -25,7 +25,7 @@ export function FindingsBySource({ data, isLoading }: FindingsBySourceProps) {
 
   const chartData = useMemo(() => {
     if (!data?.length) return []
-    const map = new Map<string, Record<string, number>>()
+    const map = new Map<string, Record<string, string | number>>()
     for (const f of data) {
       const source = f.findingSource || 'Unknown'
       const sev = f.severity?.toLowerCase() || 'unknown'

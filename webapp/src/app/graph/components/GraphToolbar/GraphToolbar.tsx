@@ -49,6 +49,8 @@ interface GraphToolbarProps {
   isGithubHuntLogsOpen?: boolean
   // Stealth mode
   stealthMode?: boolean
+  // RoE
+  roeEnabled?: boolean
   // Emergency Pause All
   onEmergencyPauseAll?: () => void
   isAnyPipelineRunning?: boolean
@@ -108,6 +110,8 @@ export function GraphToolbar({
   isGithubHuntLogsOpen = false,
   // Stealth mode
   stealthMode = false,
+  // RoE
+  roeEnabled = false,
   // Emergency Pause All
   onEmergencyPauseAll,
   isAnyPipelineRunning = false,
@@ -193,6 +197,16 @@ export function GraphToolbar({
           <div className={styles.stealthBadge} title="Stealth Mode is active — passive/low-noise techniques only">
             <StealthIcon size={12} />
             <span>Stealth</span>
+          </div>
+        </>
+      )}
+
+      {roeEnabled && (
+        <>
+          <div className={styles.divider} />
+          <div className={styles.roeBadge} title="Rules of Engagement are active — guardrails enforced on recon and agent">
+            <Shield size={12} />
+            <span>RoE</span>
           </div>
         </>
       )}

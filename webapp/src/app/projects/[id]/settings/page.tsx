@@ -15,7 +15,8 @@ export default function ProjectSettingsPage() {
   const { data: project, isLoading, error } = useProjectById(projectId)
   const updateProjectMutation = useUpdateProject()
 
-  const handleSubmit = async (data: Record<string, unknown>) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleSubmit = async (data: any) => {
     try {
       const updated = await updateProjectMutation.mutateAsync({
         projectId,

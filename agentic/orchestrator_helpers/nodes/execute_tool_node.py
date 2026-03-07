@@ -72,6 +72,25 @@ async def execute_tool_node(
     set_tenant_context(user_id, project_id)
     set_phase_context(phase)
 
+    # RoE enforcement: tool restrictions are handled via agentToolPhaseMap
+    # (is_tool_allowed_in_phase already blocks tools with empty/missing phases).
+    # Here we only enforce the severity phase cap.
+    from project_settings import get_setting
+    if get_setting('ROE_ENABLED', False):
+        # Severity phase cap
+        PHASE_ORDER = {'informational': 0, 'exploitation': 1, 'post_exploitation': 2}
+        max_phase = get_setting('ROE_MAX_SEVERITY_PHASE', 'post_exploitation')
+        if PHASE_ORDER.get(phase, 0) > PHASE_ORDER.get(max_phase, 2):
+            msg = f"RoE BLOCKED: Current phase '{phase}' exceeds maximum allowed phase '{max_phase}'."
+            logger.warning(f"[{user_id}/{project_id}/{session_id}] {msg}")
+            step_data["tool_output"] = msg
+            step_data["success"] = False
+            step_data["error_message"] = msg
+            return {
+                "_current_step": step_data,
+                "_tool_result": {"success": False, "error": msg},
+            }
+
     extra_updates = {}
 
     # Check if this is a long-running command that needs progress streaming

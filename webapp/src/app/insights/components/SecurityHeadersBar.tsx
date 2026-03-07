@@ -56,8 +56,8 @@ export function SecurityHeadersBar({ data, isLoading }: SecurityHeadersBarProps)
             contentStyle={tooltipStyle}
             itemStyle={tooltipItemStyle}
             labelStyle={tooltipLabelStyle}
-            formatter={(value: number, _name: string, props: { payload: { isSecurity: boolean } }) =>
-              [value, props.payload.isSecurity ? 'Security' : 'Standard']
+            formatter={(value: number, _name: string, props: { payload?: { isSecurity: boolean } }) =>
+              [value, props.payload?.isSecurity ? 'Security' : 'Standard']
             }
           />
           <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={16}>

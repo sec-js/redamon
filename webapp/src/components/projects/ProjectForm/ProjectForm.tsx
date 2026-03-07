@@ -25,6 +25,7 @@ import { HydraSection } from './sections/BruteForceSection'
 import { PhishingSection } from './sections/PhishingSection'
 import { GvmScanSection } from './sections/GvmScanSection'
 import { CypherFixSettingsSection } from './sections/CypherFixSettingsSection'
+import { RoeSection } from './sections/RoeSection'
 
 type ProjectFormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
 
@@ -43,13 +44,14 @@ interface ConflictResult {
 
 interface ProjectFormProps {
   initialData?: Partial<ProjectFormData> & { id?: string }
-  onSubmit: (data: ProjectFormData) => Promise<void>
+  onSubmit: (data: ProjectFormData & { roeFile?: File | null }) => Promise<void>
   onCancel: () => void
   isSubmitting?: boolean
   mode: 'create' | 'edit'
 }
 
 const TABS = [
+  { id: 'roe', label: 'Rules of Engagement' },
   { id: 'target', label: 'Target & Modules' },
   { id: 'port', label: 'Port Scanning' },
   { id: 'http', label: 'HTTP Probing' },
@@ -115,6 +117,9 @@ export function ProjectForm({
 
   // Guardrail block modal
   const [guardrailError, setGuardrailError] = useState<string | null>(null)
+
+  // RoE document file (held in memory until project creation)
+  const [roeFile, setRoeFile] = useState<File | null>(null)
 
   // Extract project ID for edit mode (to exclude from conflict check)
   const projectId = (initialData as { id?: string } | undefined)?.id
@@ -182,6 +187,10 @@ export function ProjectForm({
     setFormData(prev => ({ ...prev, [field]: value }))
   }
 
+  const updateMultipleFields = (fields: Partial<ProjectFormData>) => {
+    setFormData(prev => ({ ...prev, ...fields }))
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -209,7 +218,9 @@ export function ProjectForm({
     }
 
     try {
-      await onSubmit(formData)
+      // Attach roeFile to form data for multipart submission
+      const submitData = roeFile ? { ...formData, roeFile } : formData
+      await onSubmit(submitData)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save project'
       if (message.toLowerCase().includes('guardrail')) {
@@ -316,7 +327,17 @@ export function ProjectForm({
           </div>
 
           <div className={styles.content}>
-            {activeTab === 'target' && (
+            {activeTab === 'roe' && (
+          <RoeSection
+            data={formData}
+            updateField={updateField}
+            updateMultipleFields={updateMultipleFields}
+            mode={mode}
+            onFileSelected={setRoeFile}
+          />
+        )}
+
+        {activeTab === 'target' && (
           <>
             <TargetSection data={formData} updateField={updateField} mode={mode} />
             <ScanModulesSection data={formData} updateField={updateField} />

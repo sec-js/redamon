@@ -151,6 +151,161 @@ def build_attack_path_behavior(attack_path_type):
         return f"Follow the workflow guidance in the Available Tools section for attack path: {attack_path_type}"
 
 
+def build_roe_prompt_section():
+    """Build the Rules of Engagement prompt section from project settings.
+
+    Returns a formatted string to inject into the system prompt when RoE is enabled.
+    """
+    from project_settings import get_setting
+
+    if not get_setting('ROE_ENABLED', False):
+        return ""
+
+    sections = ["## RULES OF ENGAGEMENT (MANDATORY)"]
+
+    # Client & engagement info
+    client = get_setting('ROE_CLIENT_NAME', '')
+    contact_name = get_setting('ROE_CLIENT_CONTACT_NAME', '')
+    contact_email = get_setting('ROE_CLIENT_CONTACT_EMAIL', '')
+    contact_phone = get_setting('ROE_CLIENT_CONTACT_PHONE', '')
+    emergency = get_setting('ROE_EMERGENCY_CONTACT', '')
+    start_date = get_setting('ROE_ENGAGEMENT_START_DATE', '')
+    end_date = get_setting('ROE_ENGAGEMENT_END_DATE', '')
+    eng_type = get_setting('ROE_ENGAGEMENT_TYPE', 'external')
+
+    if client or contact_name:
+        contact_parts = []
+        if contact_name:
+            contact_parts.append(contact_name)
+        if contact_email:
+            contact_parts.append(contact_email)
+        if contact_phone:
+            contact_parts.append(contact_phone)
+        contact_str = f" | Contact: {', '.join(contact_parts)}" if contact_parts else ""
+        sections.append(f"**Client:** {client}{contact_str}")
+
+    if start_date or end_date:
+        sections.append(f"**Engagement:** {start_date} to {end_date} | Type: {eng_type}")
+
+    if emergency:
+        sections.append(f"**Emergency Contact:** {emergency}")
+
+    # Excluded hosts
+    excluded = get_setting('ROE_EXCLUDED_HOSTS', [])
+    excluded_reasons = get_setting('ROE_EXCLUDED_HOST_REASONS', [])
+    if excluded:
+        host_lines = []
+        for i, host in enumerate(excluded):
+            reason = excluded_reasons[i] if i < len(excluded_reasons) else ""
+            reason_str = f" ({reason})" if reason else ""
+            host_lines.append(f"  - {host}{reason_str}")
+        sections.append("**EXCLUDED HOSTS (NEVER TOUCH):**\n" + "\n".join(host_lines))
+
+    # Time window
+    if get_setting('ROE_TIME_WINDOW_ENABLED', False):
+        tz = get_setting('ROE_TIME_WINDOW_TIMEZONE', 'UTC')
+        days = get_setting('ROE_TIME_WINDOW_DAYS', [])
+        start_t = get_setting('ROE_TIME_WINDOW_START_TIME', '09:00')
+        end_t = get_setting('ROE_TIME_WINDOW_END_TIME', '18:00')
+        days_str = ", ".join(d.capitalize() for d in days) if days else "All days"
+        sections.append(f"**Allowed Time Window:** {days_str} {start_t}-{end_t} {tz}")
+
+    # Testing permissions
+    perm_lines = []
+    perm_flags = [
+        ('ROE_ALLOW_DOS', 'DoS'),
+        ('ROE_ALLOW_SOCIAL_ENGINEERING', 'Social Engineering'),
+        ('ROE_ALLOW_PHYSICAL_ACCESS', 'Physical Access'),
+        ('ROE_ALLOW_DATA_EXFILTRATION', 'Data Exfiltration'),
+        ('ROE_ALLOW_ACCOUNT_LOCKOUT', 'Account Lockout'),
+        ('ROE_ALLOW_PRODUCTION_TESTING', 'Production Testing'),
+    ]
+    for key, label in perm_flags:
+        val = get_setting(key, False)
+        perm_lines.append(f"  - {label}: {'ALLOWED' if val else 'PROHIBITED'}")
+    sections.append("**Testing Permissions:**\n" + "\n".join(perm_lines))
+
+    # Forbidden tools and categories
+    forbidden_tools = get_setting('ROE_FORBIDDEN_TOOLS', [])
+    forbidden_cats = get_setting('ROE_FORBIDDEN_CATEGORIES', [])
+    if forbidden_tools:
+        sections.append(f"**Forbidden Tools:** {', '.join(forbidden_tools)}")
+    if forbidden_cats:
+        sections.append(f"**Forbidden Categories:** {', '.join(forbidden_cats)}")
+
+    # Severity cap
+    max_phase = get_setting('ROE_MAX_SEVERITY_PHASE', 'post_exploitation')
+    phase_labels = {
+        'informational': 'Informational only (recon/scanning)',
+        'exploitation': 'Up to exploitation',
+        'post_exploitation': 'All phases (no restriction)',
+    }
+    sections.append(f"**Max Allowed Phase:** {phase_labels.get(max_phase, max_phase)}")
+
+    # Rate limit
+    rps = get_setting('ROE_GLOBAL_MAX_RPS', 0)
+    if rps > 0:
+        sections.append(f"**Global Rate Limit:** {rps} requests/sec")
+
+    # Data handling
+    data_handling = get_setting('ROE_SENSITIVE_DATA_HANDLING', 'no_access')
+    data_labels = {
+        'no_access': 'Do NOT access, copy, or display any sensitive data',
+        'prove_access_only': 'Note existence of sensitive data but do NOT copy or display it',
+        'limited_collection': 'Limited collection allowed — minimize data captured',
+        'full_access': 'Full access — collect as needed for proof',
+    }
+    data_parts = [f"**Data Handling:** {data_labels.get(data_handling, data_handling)}"]
+    retention_days = get_setting('ROE_DATA_RETENTION_DAYS', 90)
+    if retention_days:
+        data_parts.append(f"Data retention: {retention_days} days")
+    if get_setting('ROE_REQUIRE_DATA_ENCRYPTION', True):
+        data_parts.append("All test data must be encrypted at rest and in transit")
+    sections.append(" | ".join(data_parts))
+
+    # Compliance
+    frameworks = get_setting('ROE_COMPLIANCE_FRAMEWORKS', [])
+    if frameworks:
+        sections.append(f"**Compliance:** {', '.join(frameworks)} — testing must respect these frameworks")
+
+    # Third-party providers
+    providers = get_setting('ROE_THIRD_PARTY_PROVIDERS', [])
+    if providers:
+        sections.append(f"**Third-Party Providers:** {', '.join(providers)}")
+
+    # Communication
+    update_freq = get_setting('ROE_STATUS_UPDATE_FREQUENCY', 'daily')
+    critical_notify = get_setting('ROE_CRITICAL_FINDING_NOTIFY', True)
+    sections.append(f"**Status Updates:** {update_freq} | Critical finding notify: {'YES' if critical_notify else 'NO'}")
+
+    # Incident procedure
+    incident = get_setting('ROE_INCIDENT_PROCEDURE', '')
+    if incident:
+        sections.append(f"**Incident Procedure:** {incident}")
+
+    # Notes
+    notes = get_setting('ROE_NOTES', '')
+    if notes:
+        sections.append(f"**Additional Rules:** {notes}")
+
+    # Enforcement reminder
+    sections.append(
+        "\nYou MUST respect ALL rules above. Never target excluded hosts. "
+        "Never use forbidden tools or techniques. Stay within the allowed phase. "
+        "If you discover a critical vulnerability and critical finding notify is YES, flag it immediately."
+    )
+
+    # Raw text excerpt for additional context
+    raw_text = get_setting('ROE_RAW_TEXT', '')
+    if raw_text:
+        truncated = raw_text[:3000]
+        if len(raw_text) > 3000:
+            truncated += "\n... (truncated)"
+        sections.append(f"\n### Original RoE Document Excerpt\n```\n{truncated}\n```")
+
+    return "\n\n".join(sections)
+
+
 def build_informational_guidance(phase):
     """Build Intent Detection + Graph-First sections for informational phase only.
 

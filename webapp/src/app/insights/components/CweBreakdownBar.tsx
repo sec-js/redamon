@@ -59,9 +59,9 @@ export function CweBreakdownBar({ data, isLoading }: CweBreakdownBarProps) {
             contentStyle={tooltipStyle}
             itemStyle={tooltipItemStyle}
             labelStyle={tooltipLabelStyle}
-            formatter={(value: number, _: string, props: { payload: { name: string } }) => [
+            formatter={(value: number, _: string, props: { payload?: { name: string } }) => [
               value,
-              props.payload.name,
+              props.payload?.name ?? '',
             ]}
           />
           <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={16} name="CVEs">

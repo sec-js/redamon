@@ -53,13 +53,29 @@ async function createProject(data: {
   userId: string
   name: string
   targetDomain: string
+  roeFile?: File | null
   [key: string]: unknown
 }): Promise<FullProject> {
-  const response = await fetch('/api/projects', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
-  })
+  const { roeFile, ...projectData } = data
+
+  let response: Response
+  if (roeFile) {
+    // Multipart: include the RoE document file
+    const formData = new FormData()
+    formData.append('data', JSON.stringify(projectData))
+    formData.append('roeDocument', roeFile)
+    response = await fetch('/api/projects', {
+      method: 'POST',
+      body: formData,
+    })
+  } else {
+    response = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(projectData),
+    })
+  }
+
   if (!response.ok) {
     const error = await response.json()
     throw new Error(error.error || 'Failed to create project')

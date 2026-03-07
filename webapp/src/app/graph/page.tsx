@@ -13,9 +13,11 @@ import { ReconLogsDrawer } from './components/ReconLogsDrawer'
 import { ViewTabs, type ViewMode, type TunnelStatus } from './components/ViewTabs'
 import { DataTable } from './components/DataTable'
 import { ActiveSessions } from './components/ActiveSessions'
+import { RoeViewer } from './components/RoeViewer'
 import { useGraphData, useDimensions, useNodeSelection, useTableData } from './hooks'
 import { exportToExcel } from './utils/exportExcel'
 import { useTheme, useSession, useReconStatus, useReconSSE, useGvmStatus, useGvmSSE, useGithubHuntStatus, useGithubHuntSSE, useActiveSessions } from '@/hooks'
+import { useProjectById } from '@/hooks/useProjects'
 import { useProject } from '@/providers/ProjectProvider'
 import { GVM_PHASES, GITHUB_HUNT_PHASES } from '@/lib/recon-types'
 import styles from './page.module.css'
@@ -25,6 +27,9 @@ export default function GraphPage() {
   const { projectId, userId, currentProject, setCurrentProject, isLoading: projectLoading } = useProject()
 
   const [activeView, setActiveView] = useState<ViewMode>('graph')
+
+  // Full project data for RoE viewer (only fetched when RoE tab is active)
+  const { data: fullProject } = useProjectById(activeView === 'roe' ? projectId : null)
   const [is3D, setIs3D] = useState(true)
   const [showLabels, setShowLabels] = useState(true)
   const [isAIOpen, setIsAIOpen] = useState(false)
@@ -689,6 +694,8 @@ export default function GraphPage() {
         isGithubHuntLogsOpen={activeLogsDrawer === 'githubHunt'}
         // Stealth mode
         stealthMode={currentProject?.stealthMode}
+        // RoE
+        roeEnabled={currentProject?.roeEnabled}
         // Emergency Pause All
         onEmergencyPauseAll={handleEmergencyPauseAll}
         isAnyPipelineRunning={isAnyPipelineRunning}
@@ -745,7 +752,7 @@ export default function GraphPage() {
               globalFilter={globalFilter}
               onGlobalFilterChange={setGlobalFilter}
             />
-          ) : (
+          ) : activeView === 'sessions' ? (
             <ActiveSessions
               sessions={activeSessions.sessions}
               jobs={activeSessions.jobs}
@@ -757,7 +764,12 @@ export default function GraphPage() {
               onKillSession={activeSessions.killSession}
               onKillJob={activeSessions.killJob}
             />
-          )}
+          ) : activeView === 'roe' ? (
+            <RoeViewer
+              projectId={projectId || ''}
+              project={fullProject || {}}
+            />
+          ) : null}
         </div>
 
       </div>

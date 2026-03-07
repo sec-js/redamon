@@ -92,6 +92,44 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     # Legacy (deprecated — kept for backward compat)
     'BRUTE_FORCE_MAX_WORDLIST_ATTEMPTS': 3,
     'BRUTEFORCE_SPEED': 5,
+
+    # Rules of Engagement
+    'ROE_ENABLED': False,
+    'ROE_RAW_TEXT': '',
+    'ROE_CLIENT_NAME': '',
+    'ROE_CLIENT_CONTACT_NAME': '',
+    'ROE_CLIENT_CONTACT_EMAIL': '',
+    'ROE_CLIENT_CONTACT_PHONE': '',
+    'ROE_EMERGENCY_CONTACT': '',
+    'ROE_ENGAGEMENT_START_DATE': '',
+    'ROE_ENGAGEMENT_END_DATE': '',
+    'ROE_ENGAGEMENT_TYPE': 'external',
+    'ROE_EXCLUDED_HOSTS': [],
+    'ROE_EXCLUDED_HOST_REASONS': [],
+    'ROE_TIME_WINDOW_ENABLED': False,
+    'ROE_TIME_WINDOW_TIMEZONE': 'UTC',
+    'ROE_TIME_WINDOW_DAYS': ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+    'ROE_TIME_WINDOW_START_TIME': '09:00',
+    'ROE_TIME_WINDOW_END_TIME': '18:00',
+    'ROE_FORBIDDEN_TOOLS': [],
+    'ROE_FORBIDDEN_CATEGORIES': [],
+    'ROE_MAX_SEVERITY_PHASE': 'post_exploitation',
+    'ROE_ALLOW_DOS': False,
+    'ROE_ALLOW_SOCIAL_ENGINEERING': False,
+    'ROE_ALLOW_PHYSICAL_ACCESS': False,
+    'ROE_ALLOW_DATA_EXFILTRATION': False,
+    'ROE_ALLOW_ACCOUNT_LOCKOUT': False,
+    'ROE_ALLOW_PRODUCTION_TESTING': True,
+    'ROE_GLOBAL_MAX_RPS': 0,
+    'ROE_SENSITIVE_DATA_HANDLING': 'no_access',
+    'ROE_DATA_RETENTION_DAYS': 90,
+    'ROE_REQUIRE_DATA_ENCRYPTION': True,
+    'ROE_STATUS_UPDATE_FREQUENCY': 'daily',
+    'ROE_CRITICAL_FINDING_NOTIFY': True,
+    'ROE_INCIDENT_PROCEDURE': '',
+    'ROE_THIRD_PARTY_PROVIDERS': [],
+    'ROE_COMPLIANCE_FRAMEWORKS': [],
+    'ROE_NOTES': '',
 }
 
 
@@ -159,6 +197,44 @@ def fetch_agent_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['TARGET_DOMAIN'] = project.get('targetDomain', '')
     settings['IP_MODE'] = project.get('ipMode', False)
     settings['TARGET_IPS'] = project.get('targetIps', [])
+
+    # Rules of Engagement
+    settings['ROE_ENABLED'] = project.get('roeEnabled', DEFAULT_AGENT_SETTINGS['ROE_ENABLED'])
+    settings['ROE_RAW_TEXT'] = project.get('roeRawText', DEFAULT_AGENT_SETTINGS['ROE_RAW_TEXT'])
+    settings['ROE_CLIENT_NAME'] = project.get('roeClientName', DEFAULT_AGENT_SETTINGS['ROE_CLIENT_NAME'])
+    settings['ROE_CLIENT_CONTACT_NAME'] = project.get('roeClientContactName', DEFAULT_AGENT_SETTINGS['ROE_CLIENT_CONTACT_NAME'])
+    settings['ROE_CLIENT_CONTACT_EMAIL'] = project.get('roeClientContactEmail', DEFAULT_AGENT_SETTINGS['ROE_CLIENT_CONTACT_EMAIL'])
+    settings['ROE_CLIENT_CONTACT_PHONE'] = project.get('roeClientContactPhone', DEFAULT_AGENT_SETTINGS['ROE_CLIENT_CONTACT_PHONE'])
+    settings['ROE_EMERGENCY_CONTACT'] = project.get('roeEmergencyContact', DEFAULT_AGENT_SETTINGS['ROE_EMERGENCY_CONTACT'])
+    settings['ROE_ENGAGEMENT_START_DATE'] = project.get('roeEngagementStartDate', DEFAULT_AGENT_SETTINGS['ROE_ENGAGEMENT_START_DATE'])
+    settings['ROE_ENGAGEMENT_END_DATE'] = project.get('roeEngagementEndDate', DEFAULT_AGENT_SETTINGS['ROE_ENGAGEMENT_END_DATE'])
+    settings['ROE_ENGAGEMENT_TYPE'] = project.get('roeEngagementType', DEFAULT_AGENT_SETTINGS['ROE_ENGAGEMENT_TYPE'])
+    settings['ROE_EXCLUDED_HOSTS'] = project.get('roeExcludedHosts', DEFAULT_AGENT_SETTINGS['ROE_EXCLUDED_HOSTS'])
+    settings['ROE_EXCLUDED_HOST_REASONS'] = project.get('roeExcludedHostReasons', DEFAULT_AGENT_SETTINGS['ROE_EXCLUDED_HOST_REASONS'])
+    settings['ROE_TIME_WINDOW_ENABLED'] = project.get('roeTimeWindowEnabled', DEFAULT_AGENT_SETTINGS['ROE_TIME_WINDOW_ENABLED'])
+    settings['ROE_TIME_WINDOW_TIMEZONE'] = project.get('roeTimeWindowTimezone', DEFAULT_AGENT_SETTINGS['ROE_TIME_WINDOW_TIMEZONE'])
+    settings['ROE_TIME_WINDOW_DAYS'] = project.get('roeTimeWindowDays', DEFAULT_AGENT_SETTINGS['ROE_TIME_WINDOW_DAYS'])
+    settings['ROE_TIME_WINDOW_START_TIME'] = project.get('roeTimeWindowStartTime', DEFAULT_AGENT_SETTINGS['ROE_TIME_WINDOW_START_TIME'])
+    settings['ROE_TIME_WINDOW_END_TIME'] = project.get('roeTimeWindowEndTime', DEFAULT_AGENT_SETTINGS['ROE_TIME_WINDOW_END_TIME'])
+    settings['ROE_FORBIDDEN_TOOLS'] = project.get('roeForbiddenTools', DEFAULT_AGENT_SETTINGS['ROE_FORBIDDEN_TOOLS'])
+    settings['ROE_FORBIDDEN_CATEGORIES'] = project.get('roeForbiddenCategories', DEFAULT_AGENT_SETTINGS['ROE_FORBIDDEN_CATEGORIES'])
+    settings['ROE_MAX_SEVERITY_PHASE'] = project.get('roeMaxSeverityPhase', DEFAULT_AGENT_SETTINGS['ROE_MAX_SEVERITY_PHASE'])
+    settings['ROE_ALLOW_DOS'] = project.get('roeAllowDos', DEFAULT_AGENT_SETTINGS['ROE_ALLOW_DOS'])
+    settings['ROE_ALLOW_SOCIAL_ENGINEERING'] = project.get('roeAllowSocialEngineering', DEFAULT_AGENT_SETTINGS['ROE_ALLOW_SOCIAL_ENGINEERING'])
+    settings['ROE_ALLOW_PHYSICAL_ACCESS'] = project.get('roeAllowPhysicalAccess', DEFAULT_AGENT_SETTINGS['ROE_ALLOW_PHYSICAL_ACCESS'])
+    settings['ROE_ALLOW_DATA_EXFILTRATION'] = project.get('roeAllowDataExfiltration', DEFAULT_AGENT_SETTINGS['ROE_ALLOW_DATA_EXFILTRATION'])
+    settings['ROE_ALLOW_ACCOUNT_LOCKOUT'] = project.get('roeAllowAccountLockout', DEFAULT_AGENT_SETTINGS['ROE_ALLOW_ACCOUNT_LOCKOUT'])
+    settings['ROE_ALLOW_PRODUCTION_TESTING'] = project.get('roeAllowProductionTesting', DEFAULT_AGENT_SETTINGS['ROE_ALLOW_PRODUCTION_TESTING'])
+    settings['ROE_GLOBAL_MAX_RPS'] = project.get('roeGlobalMaxRps', DEFAULT_AGENT_SETTINGS['ROE_GLOBAL_MAX_RPS'])
+    settings['ROE_SENSITIVE_DATA_HANDLING'] = project.get('roeSensitiveDataHandling', DEFAULT_AGENT_SETTINGS['ROE_SENSITIVE_DATA_HANDLING'])
+    settings['ROE_DATA_RETENTION_DAYS'] = project.get('roeDataRetentionDays', DEFAULT_AGENT_SETTINGS['ROE_DATA_RETENTION_DAYS'])
+    settings['ROE_REQUIRE_DATA_ENCRYPTION'] = project.get('roeRequireDataEncryption', DEFAULT_AGENT_SETTINGS['ROE_REQUIRE_DATA_ENCRYPTION'])
+    settings['ROE_STATUS_UPDATE_FREQUENCY'] = project.get('roeStatusUpdateFrequency', DEFAULT_AGENT_SETTINGS['ROE_STATUS_UPDATE_FREQUENCY'])
+    settings['ROE_CRITICAL_FINDING_NOTIFY'] = project.get('roeCriticalFindingNotify', DEFAULT_AGENT_SETTINGS['ROE_CRITICAL_FINDING_NOTIFY'])
+    settings['ROE_INCIDENT_PROCEDURE'] = project.get('roeIncidentProcedure', DEFAULT_AGENT_SETTINGS['ROE_INCIDENT_PROCEDURE'])
+    settings['ROE_THIRD_PARTY_PROVIDERS'] = project.get('roeThirdPartyProviders', DEFAULT_AGENT_SETTINGS['ROE_THIRD_PARTY_PROVIDERS'])
+    settings['ROE_COMPLIANCE_FRAMEWORKS'] = project.get('roeComplianceFrameworks', DEFAULT_AGENT_SETTINGS['ROE_COMPLIANCE_FRAMEWORKS'])
+    settings['ROE_NOTES'] = project.get('roeNotes', DEFAULT_AGENT_SETTINGS['ROE_NOTES'])
 
     logger.info(f"Loaded {len(settings)} agent settings for project {project_id}")
     return settings

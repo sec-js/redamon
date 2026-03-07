@@ -225,12 +225,65 @@ async def start_recon(project_id: str, request: ReconStartRequest):
     """
     Start a new recon process for a project.
 
+    - Checks RoE time window constraints
     - Checks if recon is already running
     - Starts new container with project settings from webapp API
     - Returns current state
     """
     if not container_manager:
         raise HTTPException(status_code=503, detail="Service not initialized")
+
+    # RoE time window check: fetch project settings and verify
+    if request.webapp_api_url:
+        try:
+            import urllib.request
+            import json as json_mod
+            from datetime import datetime
+            try:
+                import zoneinfo
+            except ImportError:
+                from backports import zoneinfo
+
+            url = f"{request.webapp_api_url.rstrip('/')}/api/projects/{project_id}"
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    project = json_mod.loads(resp.read().decode())
+                    if project.get('roeEnabled') and project.get('roeTimeWindowEnabled'):
+                        tz_name = project.get('roeTimeWindowTimezone', 'UTC')
+                        try:
+                            tz = zoneinfo.ZoneInfo(tz_name)
+                            now_local = datetime.now(tz)
+                            day_name = now_local.strftime('%A').lower()
+                            allowed_days = project.get('roeTimeWindowDays', [])
+                            start_time = project.get('roeTimeWindowStartTime', '09:00')
+                            end_time = project.get('roeTimeWindowEndTime', '18:00')
+                            current_time = now_local.strftime('%H:%M')
+
+                            if day_name not in allowed_days:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail=f"RoE time window: testing not allowed on {day_name.capitalize()}. Allowed days: {', '.join(d.capitalize() for d in allowed_days)}"
+                                )
+                            # Handle overnight windows (e.g. 22:00 - 06:00)
+                            if start_time <= end_time:
+                                outside = current_time < start_time or current_time > end_time
+                            else:
+                                # Overnight: allowed if AFTER start OR BEFORE end
+                                outside = current_time < start_time and current_time > end_time
+                            if outside:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail=f"RoE time window: current time {current_time} {tz_name} is outside allowed window ({start_time}-{end_time})"
+                                )
+                        except HTTPException:
+                            raise
+                        except Exception as e:
+                            logger.warning(f"RoE time window check failed (proceeding): {e}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Could not check RoE time window (proceeding): {e}")
 
     try:
         state = await container_manager.start_recon(

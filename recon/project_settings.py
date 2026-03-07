@@ -291,6 +291,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'SECURITY_CHECK_TIMEOUT': 10,
     'SECURITY_CHECK_MAX_WORKERS': 10,
 
+    # Rules of Engagement (recon-relevant fields only)
+    'ROE_ENABLED': False,
+    'ROE_EXCLUDED_HOSTS': [],
+    'ROE_TIME_WINDOW_ENABLED': False,
+    'ROE_TIME_WINDOW_TIMEZONE': 'UTC',
+    'ROE_TIME_WINDOW_DAYS': ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+    'ROE_TIME_WINDOW_START_TIME': '09:00',
+    'ROE_TIME_WINDOW_END_TIME': '18:00',
+    'ROE_GLOBAL_MAX_RPS': 0,
 }
 
 
@@ -527,6 +536,29 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['SECURITY_CHECK_NO_RATE_LIMITING'] = project.get('securityCheckNoRateLimiting', DEFAULT_SETTINGS['SECURITY_CHECK_NO_RATE_LIMITING'])
     settings['SECURITY_CHECK_TIMEOUT'] = project.get('securityCheckTimeout', DEFAULT_SETTINGS['SECURITY_CHECK_TIMEOUT'])
     settings['SECURITY_CHECK_MAX_WORKERS'] = project.get('securityCheckMaxWorkers', DEFAULT_SETTINGS['SECURITY_CHECK_MAX_WORKERS'])
+
+    # Rules of Engagement
+    settings['ROE_ENABLED'] = project.get('roeEnabled', DEFAULT_SETTINGS['ROE_ENABLED'])
+    settings['ROE_EXCLUDED_HOSTS'] = project.get('roeExcludedHosts', DEFAULT_SETTINGS['ROE_EXCLUDED_HOSTS'])
+    settings['ROE_TIME_WINDOW_ENABLED'] = project.get('roeTimeWindowEnabled', DEFAULT_SETTINGS['ROE_TIME_WINDOW_ENABLED'])
+    settings['ROE_TIME_WINDOW_TIMEZONE'] = project.get('roeTimeWindowTimezone', DEFAULT_SETTINGS['ROE_TIME_WINDOW_TIMEZONE'])
+    settings['ROE_TIME_WINDOW_DAYS'] = project.get('roeTimeWindowDays', DEFAULT_SETTINGS['ROE_TIME_WINDOW_DAYS'])
+    settings['ROE_TIME_WINDOW_START_TIME'] = project.get('roeTimeWindowStartTime', DEFAULT_SETTINGS['ROE_TIME_WINDOW_START_TIME'])
+    settings['ROE_TIME_WINDOW_END_TIME'] = project.get('roeTimeWindowEndTime', DEFAULT_SETTINGS['ROE_TIME_WINDOW_END_TIME'])
+    settings['ROE_GLOBAL_MAX_RPS'] = project.get('roeGlobalMaxRps', DEFAULT_SETTINGS['ROE_GLOBAL_MAX_RPS'])
+
+    # RoE: cap all rate limits to the global max if set
+    roe_max_rps = settings['ROE_GLOBAL_MAX_RPS']
+    if settings.get('ROE_ENABLED', False) and roe_max_rps > 0:
+        RATE_LIMIT_KEYS = [
+            'NAABU_RATE_LIMIT', 'HTTPX_RATE_LIMIT', 'NUCLEI_RATE_LIMIT',
+            'KATANA_RATE_LIMIT', 'GAU_VERIFY_RATE_LIMIT', 'GAU_METHOD_DETECT_RATE_LIMIT',
+            'KITERUNNER_RATE_LIMIT', 'KITERUNNER_METHOD_DETECT_RATE_LIMIT',
+        ]
+        for key in RATE_LIMIT_KEYS:
+            if key in settings and settings[key] > roe_max_rps:
+                logger.info(f"RoE: capping {key} from {settings[key]} to {roe_max_rps} rps")
+                settings[key] = roe_max_rps
 
     logger.info(f"Loaded {len(settings)} settings for project {project_id}")
     return settings

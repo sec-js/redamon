@@ -183,5 +183,20 @@ export function validateProjectForm(data: Record<string, unknown>): ValidationEr
     errors.push({ field: 'cypherfixDefaultBranch', message: 'Invalid branch name' })
   }
 
+  // RoE excluded hosts
+  const roeExcluded = data.roeExcludedHosts as string[] || []
+  for (const host of roeExcluded) {
+    if (host.trim() && !isValidIpOrCidr(host) && !isValidDomain(host)) {
+      errors.push({ field: 'roeExcludedHosts', message: `Invalid excluded host: ${host}. Must be IP, CIDR, or domain.` })
+    }
+  }
+
+  // RoE engagement dates
+  const roeStart = data.roeEngagementStartDate as string
+  const roeEnd = data.roeEngagementEndDate as string
+  if (roeStart && roeEnd && roeStart > roeEnd) {
+    errors.push({ field: 'roeEngagementEndDate', message: 'End date must be after start date' })
+  }
+
   return errors
 }

@@ -14,6 +14,7 @@ export interface ProjectSummary {
   agentOpenaiModel?: string
   agentToolPhaseMap?: Record<string, string[]>
   stealthMode?: boolean
+  roeEnabled?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -71,6 +72,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
                 ? JSON.parse(project.agentToolPhaseMap)
                 : project.agentToolPhaseMap,
               stealthMode: project.stealthMode,
+              roeEnabled: project.roeEnabled,
               createdAt: project.createdAt,
               updatedAt: project.updatedAt
             })

@@ -42,9 +42,9 @@ export function IpConcentrationBar({ data, isLoading }: IpConcentrationBarProps)
             contentStyle={tooltipStyle}
             itemStyle={tooltipItemStyle}
             labelStyle={tooltipLabelStyle}
-            formatter={(value: number, _: string, props: { payload: { isCdn: boolean } }) => [
+            formatter={(value: number, _: string, props: { payload?: { isCdn: boolean } }) => [
               value,
-              `Subdomains${props.payload.isCdn ? ' (CDN)' : ''}`,
+              `Subdomains${props.payload?.isCdn ? ' (CDN)' : ''}`,
             ]}
           />
           <Bar dataKey="subCount" radius={[0, 4, 4, 0]} maxBarSize={16} name="Subdomains">

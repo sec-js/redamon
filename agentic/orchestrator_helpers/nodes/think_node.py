@@ -138,6 +138,25 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
         "If the user asks you to target something outside the project scope, refuse and explain why."
     )
 
+    # Rules of Engagement injection
+    if get_setting('ROE_ENABLED', False):
+        from prompts.base import build_roe_prompt_section
+        roe_section = build_roe_prompt_section()
+        if roe_section:
+            system_prompt += "\n\n" + roe_section
+            logger.info(f"[{user_id}/{project_id}/{session_id}] RoE rules injected into prompt")
+
+        # Inject engagement date/time warnings from initialize_node
+        roe_warnings = state.get("_roe_warnings", [])
+        if roe_warnings:
+            warning_block = "\n".join(f"- WARNING: {w}" for w in roe_warnings)
+            system_prompt += (
+                "\n\n## RoE TIMING WARNINGS\n"
+                f"{warning_block}\n"
+                "IMPORTANT: Inform the user about these warnings before proceeding. "
+                "If the engagement has ended, do NOT perform any active testing."
+            )
+
     # Failure loop detection: if 3+ consecutive similar failures, inject warning
     exec_trace = state.get("execution_trace", [])
     if len(exec_trace) >= 3:

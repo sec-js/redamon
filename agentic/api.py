@@ -156,6 +156,171 @@ async def check_target_guardrail(body: GuardrailRequest):
         return {"allowed": True, "reason": f"Guardrail error: {str(e)}"}
 
 
+# =============================================================================
+# ROE PARSING — LLM-based extraction of Rules of Engagement from document text
+# =============================================================================
+
+class RoeParseRequest(BaseModel):
+    """Request model for RoE document parsing."""
+    text: str
+    model: str | None = None  # Optional: override the LLM model for parsing
+
+
+_ROE_PARSE_PROMPT = """You are parsing a Rules of Engagement (RoE) document for a penetration testing engagement.
+Extract ALL relevant information into the JSON structure below.
+Use null for any field not mentioned in the document. Only set values you are confident about.
+
+Return ONLY valid JSON — no markdown, no explanations, no code fences.
+
+{
+  "name": "suggested project name based on client/target",
+  "description": "brief engagement description",
+  "targetDomain": "primary target domain (e.g. devergolabs.com) — just the root domain, no www prefix",
+  "targetIps": ["in-scope IPs/CIDRs"],
+  "ipMode": false,
+  "subdomainList": ["subdomain PREFIXES only, NOT full domains — e.g. 'www', 'api', 'portal', NOT 'www.example.com'"],
+  "stealthMode": "ONLY set true if the document EXPLICITLY requires passive-only/no active scanning. Mentions of 'stealth' or 'low-noise' do NOT qualify — those are handled by notes. Default: false",
+
+  "roeClientName": "client organization name",
+  "roeClientContactName": "primary client point of contact name",
+  "roeClientContactEmail": "client POC email",
+  "roeClientContactPhone": "client POC phone",
+  "roeEmergencyContact": "who to contact if incident occurs",
+  "roeEngagementStartDate": "YYYY-MM-DD",
+  "roeEngagementEndDate": "YYYY-MM-DD",
+  "roeEngagementType": "external|internal|web_app|api|mobile|physical|social_engineering|red_team",
+
+  "roeExcludedHosts": ["IPs/domains explicitly excluded from testing"],
+  "roeExcludedHostReasons": ["reason for each exclusion, parallel array"],
+
+  "roeTimeWindowEnabled": true,
+  "roeTimeWindowTimezone": "timezone (e.g. America/New_York, Europe/Rome)",
+  "roeTimeWindowDays": ["monday","tuesday"],
+  "roeTimeWindowStartTime": "HH:MM",
+  "roeTimeWindowEndTime": "HH:MM",
+
+  "roeForbiddenCategories": ["brute_force, dos, social_engineering, physical"],
+  "roeMaxSeverityPhase": "informational|exploitation|post_exploitation",
+  "agentToolPhaseMap": "ONLY set this if the RoE says something like 'do not use Hydra' or 'tool X is forbidden'. Set the forbidden tool to []. Example: if the RoE says 'Hydra must not be used', return {\"execute_hydra\": []}. 'discouraged' or 'use with caution' does NOT count — only an explicit unconditional ban. Return null if no tool is explicitly banned by name.",
+  "roeAllowDos": false,
+  "roeAllowSocialEngineering": false,
+  "roeAllowPhysicalAccess": false,
+  "roeAllowDataExfiltration": false,
+  "roeAllowAccountLockout": false,
+  "roeAllowProductionTesting": true,
+
+  "roeGlobalMaxRps": 0,
+
+  "roeSensitiveDataHandling": "no_access|prove_access_only|limited_collection|full_access",
+  "roeDataRetentionDays": 90,
+  "roeRequireDataEncryption": true,
+
+  "roeStatusUpdateFrequency": "daily|weekly|on_finding|none",
+  "roeCriticalFindingNotify": true,
+  "roeIncidentProcedure": "description of incident response procedure",
+
+  "roeThirdPartyProviders": ["cloud/hosting providers needing separate authorization"],
+  "roeComplianceFrameworks": ["PCI-DSS", "HIPAA", "SOC2", "GDPR", "ISO27001"],
+
+  "roeNotes": "any other rules, restrictions, or guidance not captured above",
+
+  "naabuRateLimit": null,
+  "nucleiRateLimit": null,
+  "katanaRateLimit": null,
+  "httpxRateLimit": null,
+  "nucleiSeverity": null,
+  "scanModules": null
+}
+
+IMPORTANT RULES:
+- If DoS is prohibited, set roeAllowDos=false AND add "dos" to roeForbiddenCategories
+- If social engineering is prohibited, set roeAllowSocialEngineering=false AND add "social_engineering" to roeForbiddenCategories
+- If brute force is EXPLICITLY forbidden (not just "discouraged"), add "brute_force" to roeForbiddenCategories AND set execute_hydra to [] in agentToolPhaseMap
+- For phase restrictions (e.g. "no post-exploitation", "reconnaissance only"), ONLY set roeMaxSeverityPhase. Do NOT touch agentToolPhaseMap for phase-level restrictions.
+- If a global rate limit is specified, also set individual tool rate limits to that value
+- Map compliance requirements (PCI, HIPAA, etc.) to roeComplianceFrameworks
+- "discouraged", "use with caution", or "avoid unattended use" does NOT mean forbidden. Only disable a tool if the RoE explicitly says "do not use [tool]" or "[tool] is prohibited/forbidden".
+- agentToolPhaseMap: Return null unless the RoE explicitly bans a specific tool by name with words like "forbidden", "prohibited", "must not be used", or "not permitted".
+
+RoE Document:
+---
+{document_text}
+---"""
+
+
+@app.post("/roe/parse", tags=["RoE"])
+async def parse_roe_document(body: RoeParseRequest):
+    """Parse a Rules of Engagement document using the LLM and extract structured settings."""
+    import json as json_mod
+    from project_settings import DEFAULT_AGENT_SETTINGS
+
+    if not orchestrator or not orchestrator._initialized:
+        return JSONResponse(content={"error": "Agent not initialized"}, status_code=503)
+
+    # Use the requested model, or fall back to orchestrator's current LLM
+    from orchestrator_helpers.llm_setup import setup_llm
+
+    requested_model = body.model or DEFAULT_AGENT_SETTINGS['OPENAI_MODEL']
+    try:
+        llm = setup_llm(
+            requested_model,
+            openai_api_key=orchestrator.openai_api_key,
+            anthropic_api_key=orchestrator.anthropic_api_key,
+            openrouter_api_key=orchestrator.openrouter_api_key,
+            openai_compat_api_key=orchestrator.openai_compat_api_key,
+            openai_compat_base_url=orchestrator.openai_compat_base_url,
+            aws_access_key_id=orchestrator.aws_access_key_id,
+            aws_secret_access_key=orchestrator.aws_secret_access_key,
+            aws_region=orchestrator.aws_region,
+        )
+    except Exception as e:
+        logger.error(f"RoE parse: failed to set up LLM ({requested_model}): {e}")
+        return JSONResponse(content={"error": f"LLM not available for model {requested_model}"}, status_code=503)
+
+    try:
+        # System message has instructions only; user document goes in HumanMessage
+        # to reduce prompt injection risk from adversarial document content
+        system_prompt = _ROE_PARSE_PROMPT.split("RoE Document:\n---")[0].strip()
+        doc_text = body.text[:50000]
+        logger.info(f"RoE parse: using model {requested_model}")
+        response = await llm.ainvoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"RoE Document:\n---\n{doc_text}\n---\n\nParse the RoE document above and return the JSON."),
+        ])
+        content = normalize_content(response.content).strip()
+
+        # Strip markdown code fences if present (handle ```json, ```JSON, ``` json, etc.)
+        import re
+        fence_match = re.search(r'```(?:json)?\s*\n(.*?)```', content, re.DOTALL | re.IGNORECASE)
+        if fence_match:
+            content = fence_match.group(1).strip()
+        else:
+            # Fallback: try to extract first JSON object
+            brace_start = content.find('{')
+            if brace_start > 0:
+                content = content[brace_start:]
+            # Strip trailing non-JSON
+            brace_end = content.rfind('}')
+            if brace_end >= 0 and brace_end < len(content) - 1:
+                content = content[:brace_end + 1]
+
+        parsed = json_mod.loads(content)
+        return parsed
+
+    except json_mod.JSONDecodeError as e:
+        logger.error(f"RoE parse: invalid JSON from LLM: {e}")
+        return JSONResponse(
+            content={"error": f"LLM returned invalid JSON: {str(e)}"},
+            status_code=422,
+        )
+    except Exception as e:
+        logger.error(f"RoE parse error: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to parse RoE document: {str(e)}"},
+            status_code=500,
+        )
+
+
 @app.post("/emergency-stop-all", tags=["System"])
 async def emergency_stop_all():
     """Emergency stop: cancel every running agent task immediately."""
@@ -210,7 +375,7 @@ async def get_defaults():
 
     # HYDRA_* keys map to Prisma fields without the 'agent' prefix
     # (e.g. HYDRA_ENABLED -> hydraEnabled, not agentHydraEnabled)
-    NO_PREFIX_KEYS = {k for k in DEFAULT_AGENT_SETTINGS if k.startswith(('HYDRA_', 'PHISHING_'))}
+    NO_PREFIX_KEYS = {k for k in DEFAULT_AGENT_SETTINGS if k.startswith(('HYDRA_', 'PHISHING_', 'ROE_'))}
 
     camel_case_defaults = {}
     for k, v in DEFAULT_AGENT_SETTINGS.items():

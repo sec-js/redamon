@@ -168,9 +168,21 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     // 6. Create ZIP archive
     const archive = archiver('zip', { zlib: { level: 6 } })
 
+    // Separate binary RoE document from project JSON — Bytes can't survive JSON.stringify
+    let roeDocumentBase64: string | null = null
+    if (project.roeDocumentData) {
+      roeDocumentBase64 = Buffer.from(project.roeDocumentData).toString('base64')
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { roeDocumentData: _roeDocBinary, ...projectWithoutBinary } = project
+    const projectExport = {
+      ...projectWithoutBinary,
+      ...(roeDocumentBase64 ? { roeDocumentDataBase64: roeDocumentBase64 } : {}),
+    }
+
     // Append JSON data
     archive.append(Buffer.from(JSON.stringify(manifest, null, 2)), { name: 'manifest.json' })
-    archive.append(Buffer.from(JSON.stringify(project, null, 2)), { name: 'project.json' })
+    archive.append(Buffer.from(JSON.stringify(projectExport, null, 2)), { name: 'project.json' })
     archive.append(Buffer.from(JSON.stringify(conversations, null, 2)), { name: 'conversations/conversations.json' })
     archive.append(Buffer.from(JSON.stringify(messages, null, 2)), { name: 'conversations/messages.json' })
     archive.append(Buffer.from(JSON.stringify(remediations, null, 2)), { name: 'remediations/remediations.json' })

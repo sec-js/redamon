@@ -36,9 +36,9 @@
   <img src="https://img.shields.io/badge/SQLMap-Injection-C0392B?style=for-the-badge" alt="SQLMap"/>
   <img src="https://img.shields.io/badge/Hydra-Brute%20Force-E67E22?style=for-the-badge" alt="Hydra Brute Force"/>
   <img src="https://img.shields.io/badge/CypherFix-Auto%20Remediation-00B894?style=for-the-badge" alt="CypherFix Auto Remediation"/>
+  <img src="https://img.shields.io/badge/RoE-Guardrails-3B82F6?style=for-the-badge" alt="RoE Guardrails"/>
   <br/>
   <a href="https://github.com/samugit83/redamon/wiki"><img src="https://img.shields.io/badge/📖_WIKI-FULL%20DOCUMENTATION-1A73E8?style=for-the-badge" alt="Wiki Documentation"/></a>
-  <a href="https://github.com/users/samugit83/projects/1"><img src="https://img.shields.io/badge/📋_ROADMAP-CONTRIBUTE-00C853?style=for-the-badge" alt="Roadmap & Contribute"/></a>
 </p>
 
 > **LEGAL DISCLAIMER**: This tool is intended for **authorized security testing**, **educational purposes**, and **research only**. Never use this system to scan, probe, or attack any system you do not own or have explicit written permission to test. Unauthorized access is **illegal** and punishable by law. By using this tool, you accept **full responsibility** for your actions. **[Read Full Disclaimer](DISCLAIMER.md)**
@@ -251,6 +251,7 @@ No rebuild needed — just restart.
   - [Remote Shells — Live Session Interaction](#remote-shells--live-session-interaction)
   - [CypherFix — Automated Vulnerability Remediation](#cypherfix--automated-vulnerability-remediation)
   - [Project Settings](#project-settings)
+  - [Rules of Engagement (RoE)](#rules-of-engagement-roe)
   - [Insights Dashboard](#insights-dashboard)
 - [System Architecture](#system-architecture)
   - [High-Level Architecture](#high-level-architecture)
@@ -950,6 +951,43 @@ Every project in RedAmon has **180+ configurable parameters** across 11 setting 
 > **Full parameter reference:** See the **[Project Settings Reference](https://github.com/samugit83/redamon/wiki/9.-Project-Settings-Reference)** in the Wiki for all 180+ parameters with defaults and descriptions.
 >
 > **Complete user guide:** See the **[RedAmon Wiki](https://github.com/samugit83/redamon/wiki)** for step-by-step instructions on creating users, projects, running scans, and using the AI agent.
+
+### Rules of Engagement (RoE)
+
+RedAmon supports uploading a **Rules of Engagement** document (PDF, TXT, MD, or DOCX) during project creation to automatically configure project settings and enforce engagement constraints. An LLM parses the document and maps its contents to the relevant project fields across multiple tabs.
+
+**Document Upload & Auto-Configuration**
+- Upload a RoE document in the **Rules of Engagement** tab when creating a new project
+- The LLM extracts client info, scope, exclusions, time windows, testing permissions, rate limits, compliance frameworks, and more
+- Parsed settings auto-populate the **Target & Modules**, **Agent Behaviour**, and **Rules of Engagement** tabs
+- The original document is stored in PostgreSQL and can be downloaded from the `/graph` RoE viewer
+
+**Enforcement — Recon Pipeline**
+- **Excluded hosts** — IPs, CIDRs, and domains listed in the RoE are filtered from all scan targets (port scanning, HTTP probing, vulnerability scanning) with CIDR-aware and domain-suffix matching
+- **Rate limit cap** — a global max requests/sec from the RoE overrides any individual tool rate that exceeds it
+- **Time window gate** — the recon orchestrator rejects scan requests outside the allowed days/hours (timezone-aware, supports overnight windows)
+
+**Enforcement — AI Agent**
+- **Prompt injection** — the full RoE is injected into the agent's system prompt at the `think_node`, including client contacts, excluded hosts, testing permissions, forbidden categories, rate limits, data handling rules, compliance frameworks, and incident procedures
+- **Severity phase cap** — a hard deterministic gate in `execute_tool_node` blocks tool execution if the current phase exceeds the RoE maximum (e.g., "exploitation" blocks post-exploitation tools regardless of what the LLM decides)
+- **Tool restrictions** — tools explicitly forbidden by the RoE are disabled via the Tool Phase Restrictions matrix in the Agent Behaviour tab
+- **Timing warnings** — the `initialize_node` checks engagement dates and time windows, injecting warnings into the agent prompt if the engagement has ended or testing is outside the allowed window
+
+**RoE Viewer**
+- A dedicated **RoE** tab on the `/graph` page displays all parsed rules in a formatted card layout: engagement details, scope, exclusions, time windows, testing permissions, constraints, data handling, communication rules, compliance, and notes
+- A **Download Document** button retrieves the original uploaded file
+- When RoE is active, a blue **RoE** badge appears in the graph toolbar next to the target domain
+
+| RoE Category | Parsed Fields |
+|---|---|
+| **Client & Engagement** | Client name, contact name/email/phone, emergency contact, engagement dates, type |
+| **Scope & Exclusions** | Excluded hosts with reasons, CIDR ranges, domain suffixes |
+| **Time Windows** | Allowed days, start/end time, timezone |
+| **Testing Permissions** | DoS, social engineering, physical access, data exfiltration, account lockout, production testing |
+| **Constraints** | Forbidden categories, max severity phase, global rate limit |
+| **Data Handling** | Sensitive data policy, retention period, encryption requirements |
+| **Communication** | Status update frequency, critical finding notification, incident procedure |
+| **Compliance** | Frameworks (PCI-DSS, HIPAA, SOC2, GDPR, ISO27001), third-party providers |
 
 ### Insights Dashboard
 

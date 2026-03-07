@@ -303,6 +303,67 @@ model Project {
   cypherfixRequireApproval          Boolean  @default(true) @map("cypherfix_require_approval")
   cypherfixLlmModel                 String   @default("") @map("cypherfix_llm_model")
 
+  // ========== RULES OF ENGAGEMENT ==========
+  // --- Document & Metadata ---
+  roeEnabled                  Boolean  @default(false) @map("roe_enabled")
+  roeRawText                  String   @default("") @map("roe_raw_text") @db.Text
+  roeDocumentName             String   @default("") @map("roe_document_name")
+  roeDocumentData             Bytes?   @map("roe_document_data")
+  roeDocumentMimeType         String   @default("") @map("roe_document_mime_type")
+  roeParsedJson               Json?    @map("roe_parsed_json")
+
+  // --- Client & Engagement Info ---
+  roeClientName               String   @default("") @map("roe_client_name")
+  roeClientContactName        String   @default("") @map("roe_client_contact_name")
+  roeClientContactEmail       String   @default("") @map("roe_client_contact_email")
+  roeClientContactPhone       String   @default("") @map("roe_client_contact_phone")
+  roeEmergencyContact         String   @default("") @map("roe_emergency_contact")
+  roeEngagementStartDate      String   @default("") @map("roe_engagement_start_date")
+  roeEngagementEndDate        String   @default("") @map("roe_engagement_end_date")
+  roeEngagementType           String   @default("external") @map("roe_engagement_type")
+
+  // --- Scope & Exclusions ---
+  roeExcludedHosts            String[] @default([]) @map("roe_excluded_hosts")
+  roeExcludedHostReasons      String[] @default([]) @map("roe_excluded_host_reasons")
+
+  // --- Time Windows ---
+  roeTimeWindowEnabled        Boolean  @default(false) @map("roe_time_window_enabled")
+  roeTimeWindowTimezone       String   @default("UTC") @map("roe_time_window_timezone")
+  roeTimeWindowDays           String[] @default(["monday","tuesday","wednesday","thursday","friday"]) @map("roe_time_window_days")
+  roeTimeWindowStartTime      String   @default("09:00") @map("roe_time_window_start_time")
+  roeTimeWindowEndTime        String   @default("18:00") @map("roe_time_window_end_time")
+
+  // --- Testing Restrictions ---
+  roeForbiddenTools           String[] @default([]) @map("roe_forbidden_tools")
+  roeForbiddenCategories      String[] @default([]) @map("roe_forbidden_categories")
+  roeMaxSeverityPhase         String   @default("post_exploitation") @map("roe_max_severity_phase")
+  roeAllowDos                 Boolean  @default(false) @map("roe_allow_dos")
+  roeAllowSocialEngineering   Boolean  @default(false) @map("roe_allow_social_engineering")
+  roeAllowPhysicalAccess      Boolean  @default(false) @map("roe_allow_physical_access")
+  roeAllowDataExfiltration    Boolean  @default(false) @map("roe_allow_data_exfiltration")
+  roeAllowAccountLockout      Boolean  @default(false) @map("roe_allow_account_lockout")
+  roeAllowProductionTesting   Boolean  @default(true) @map("roe_allow_production_testing")
+
+  // --- Rate Limits ---
+  roeGlobalMaxRps             Int      @default(0) @map("roe_global_max_rps")
+
+  // --- Data Handling ---
+  roeSensitiveDataHandling    String   @default("no_access") @map("roe_sensitive_data_handling")
+  roeDataRetentionDays        Int      @default(90) @map("roe_data_retention_days")
+  roeRequireDataEncryption    Boolean  @default(true) @map("roe_require_data_encryption")
+
+  // --- Communication & Incident Response ---
+  roeStatusUpdateFrequency    String   @default("daily") @map("roe_status_update_frequency")
+  roeCriticalFindingNotify    Boolean  @default(true) @map("roe_critical_finding_notify")
+  roeIncidentProcedure        String   @default("") @map("roe_incident_procedure") @db.Text
+
+  // --- Authorization & Compliance ---
+  roeThirdPartyProviders      String[] @default([]) @map("roe_third_party_providers")
+  roeComplianceFrameworks     String[] @default([]) @map("roe_compliance_frameworks")
+
+  // --- Free-Text ---
+  roeNotes                    String   @default("") @map("roe_notes") @db.Text
+
   remediations                      Remediation[]
 
   @@map("projects")
