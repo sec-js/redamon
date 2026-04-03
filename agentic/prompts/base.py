@@ -1582,37 +1582,38 @@ RETURN tf.detector_name, tf.file, tf.line, tf.verified, tf.redacted
 
 ### JS Recon Findings
 ```cypher
-// All JS findings for a domain
-MATCH (b:BaseURL)-[:HAS_JS_FINDING]->(jf:JsReconFinding)
-WHERE b.url CONTAINS 'target.com'
-RETURN jf.finding_type, jf.severity, jf.title, jf.detail, b.url
+// All analyzed JS files
+MATCH (file:JsReconFinding {finding_type: 'js_file'})
+RETURN file.title as filename, file.source_url as url, file.is_uploaded as uploaded
+
+// All findings from a specific JS file
+MATCH (file:JsReconFinding {finding_type: 'js_file'})-[:HAS_JS_FINDING]->(jf:JsReconFinding)
+WHERE file.title CONTAINS 'app.js'
+RETURN jf.finding_type, jf.severity, jf.title, jf.detail
 ORDER BY CASE jf.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END
 
 // Dependency confusion findings (critical)
-MATCH (jf:JsReconFinding)
-WHERE jf.finding_type = 'dependency_confusion'
-RETURN jf.title, jf.detail, jf.evidence
+MATCH (file:JsReconFinding {finding_type: 'js_file'})-[:HAS_JS_FINDING]->(jf:JsReconFinding {finding_type: 'dependency_confusion'})
+RETURN file.title as js_file, jf.title, jf.detail, jf.evidence
 
-// Validated secrets from JS Recon
-MATCH (b:BaseURL)-[:HAS_SECRET]->(s:Secret)
-WHERE s.source = 'js_recon' AND s.validation_status = 'validated'
-RETURN s.secret_type, s.sample, s.validation_info, b.url, s.severity
+// Secrets found in JS files (traverses file hierarchy)
+MATCH (file:JsReconFinding {finding_type: 'js_file'})-[:HAS_SECRET]->(s:Secret)
+RETURN file.title as js_file, s.secret_type, s.sample, s.severity, s.validation_status
 
-// JS-extracted endpoints
-MATCH (b:BaseURL)-[:HAS_ENDPOINT]->(e:Endpoint)
-WHERE e.source = 'js_recon'
-RETURN e.method, e.path, e.category, e.endpoint_type, b.url
+// JS-extracted endpoints per file
+MATCH (file:JsReconFinding {finding_type: 'js_file'})-[:HAS_ENDPOINT]->(e:Endpoint)
+RETURN file.title as js_file, e.method, e.path, e.category, e.endpoint_type
 ```
 
 ### ALL Secrets (Web + Git Repository + JS Recon + Uploads)
-When user asks about "secrets" broadly, query Secret nodes (from both BaseURL and Domain), TrufflehogFinding nodes, AND JsReconFinding nodes:
+When user asks about "secrets" broadly, query Secret nodes (from JS file nodes and BaseURL), TrufflehogFinding nodes, AND JsReconFinding nodes:
 ```cypher
 // Combined view of all secrets from all sources
 MATCH (b:BaseURL)-[:HAS_SECRET]->(s:Secret)
 RETURN 'Web Resource' as source, s.secret_type as type, s.source as tool, s.source_url as location, s.severity as severity
 UNION ALL
-MATCH (d:Domain)-[:HAS_SECRET]->(s:Secret)
-RETURN 'Upload' as source, s.secret_type as type, s.source as tool, s.source_url as location, s.severity as severity
+MATCH (file:JsReconFinding {finding_type: 'js_file'})-[:HAS_SECRET]->(s:Secret)
+RETURN 'JS File: ' + file.title as source, s.secret_type as type, s.source as tool, s.source_url as location, s.severity as severity
 UNION ALL
 MATCH (tf:TrufflehogFinding)
 RETURN 'Git Repository' as source, tf.detector_name as type, 'trufflehog' as tool, tf.repository + '/' + tf.file as location, CASE WHEN tf.verified THEN 'high' ELSE 'medium' END as severity
