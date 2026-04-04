@@ -129,5 +129,8 @@ Integrate **[TOOL_NAME]** into the RedAmon recon pipeline.
   4. If the tool should be enabled with non-default settings (e.g., higher limits, specific mode), add those parameters to the preset
   5. If the tool uses default settings and the preset doesn't need to change it, do NOT add it -- missing keys automatically inherit from defaults (safe merge)
   6. The preset registry is at `webapp/src/lib/recon-presets/index.ts` -- no changes needed there unless adding a new preset
+  7. Add all new tool parameters to `reconPresetSchema` in `webapp/src/lib/recon-presets/recon-preset-schema.ts` (Zod validation). Without this, AI-generated presets will silently strip the new tool's settings during validation.
+  8. Add the new tool's parameters (name, type, default, description) to the `RECON_PARAMETER_CATALOG` in `webapp/src/app/api/presets/generate/route.ts`. Without this, the LLM that generates AI presets won't know the tool exists and will never include its settings.
+  9. If the new tool introduces file-upload or target-identity settings, add them to `PRESET_EXCLUDED_FIELDS` in `webapp/src/lib/project-preset-utils.ts` so they are stripped when users save reusable presets. Standard toggle/number/string settings do NOT need to be excluded.
 - [ ] Error handling: try/except with timeout, Docker/binary not found, API errors — follow existing patterns
 - [ ] Build and test: `docker compose build recon` then run a scan

@@ -293,7 +293,6 @@ export const ViewTabs = memo(function ViewTabs({
           <Toggle
             checked={showLabels ?? false}
             onChange={onToggleLabels}
-            labelOff="Labels"
             labelOn="Labels"
             aria-label="Toggle labels"
           />

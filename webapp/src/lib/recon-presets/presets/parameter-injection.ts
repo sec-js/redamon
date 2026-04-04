@@ -116,10 +116,7 @@ Pentesters and bug bounty hunters focused on injection vulnerabilities. Ideal fo
 
     // --- GAU: enabled with URL verification and method detection ---
     gauEnabled: true,
-    gauProviderWayback: true,
-    gauProviderCommoncrawl: true,
-    gauProviderOtx: true,
-    gauProviderUrlscan: true,
+    gauProviders: ['wayback', 'commoncrawl', 'otx', 'urlscan'],
     gauMaxUrls: 5000,
     gauTimeout: 90,
     gauThreads: 5,

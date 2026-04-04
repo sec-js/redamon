@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Save, X, Loader2, AlertTriangle, Download, ShieldAlert, Zap } from 'lucide-react'
+import { Save, X, Loader2, AlertTriangle, Download, ShieldAlert, Zap, Bookmark, FolderOpen } from 'lucide-react'
 import type { Project } from '@prisma/client'
 import { validateProjectForm } from '@/lib/validation'
 import { isHardBlockedDomain } from '@/lib/hard-guardrail'
@@ -42,6 +42,8 @@ import { RoeSection } from './sections/RoeSection'
 import { OsintEnrichmentSection } from './sections/OsintEnrichmentSection'
 import { JsReconSection } from './sections/JsReconSection'
 import { ReconPresetModal } from './ReconPresetModal'
+import { SavePresetModal } from './SavePresetModal'
+import { UserPresetDrawer } from './UserPresetDrawer'
 import { getPresetById, type ReconPreset } from '@/lib/recon-presets'
 
 type ProjectFormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
@@ -175,6 +177,10 @@ export function ProjectForm({
     return null
   })
 
+  // User Presets
+  const [isSavePresetModalOpen, setIsSavePresetModalOpen] = useState(false)
+  const [isUserPresetDrawerOpen, setIsUserPresetDrawerOpen] = useState(false)
+
   // Domain conflict checking
   const [conflict, setConflict] = useState<ConflictResult | null>(null)
   const [isCheckingConflict, setIsCheckingConflict] = useState(false)
@@ -285,6 +291,16 @@ export function ProjectForm({
     toast.success(`Recon preset "${preset.name}" applied`, 'Preset Applied')
   }, [toast])
 
+  const handleLoadUserPreset = useCallback((settings: Record<string, unknown>) => {
+    setFormData(prev => ({ ...prev, ...settings } as ProjectFormData))
+    // Sync recon preset badge
+    if (settings.reconPresetId) {
+      setAppliedPreset(getPresetById(settings.reconPresetId as string) ?? null)
+    } else {
+      setAppliedPreset(null)
+    }
+  }, [])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -361,15 +377,37 @@ export function ProjectForm({
             className="secondaryButton"
             onClick={onCancel}
             disabled={isSubmitting}
+            title="Discard all unsaved changes and return to the previous page"
           >
             <X size={14} />
             Cancel
+          </button>
+          <button
+            type="button"
+            className="secondaryButton"
+            onClick={() => setIsUserPresetDrawerOpen(true)}
+            disabled={isSubmitting || isLoadingDefaults}
+            title="Load a previously saved preset to apply all its settings to this project (target and subdomain fields are preserved)"
+          >
+            <FolderOpen size={14} />
+            Load Preset
+          </button>
+          <button
+            type="button"
+            className="secondaryButton"
+            onClick={() => setIsSavePresetModalOpen(true)}
+            disabled={isSubmitting || isLoadingDefaults}
+            title="Save the current project settings as a reusable preset (everything except target domain, subdomains, and IP list)"
+          >
+            <Bookmark size={14} />
+            Save as Preset
           </button>
           {mode === 'edit' && projectId && (
             <button
               type="button"
               className="secondaryButton"
               onClick={() => window.open(`/api/projects/${projectId}/export`)}
+              title="Download a full project backup as a ZIP file including settings, conversations, graph data, reports, and artifacts"
             >
               <Download size={14} />
               Export
@@ -379,6 +417,7 @@ export function ProjectForm({
             type="submit"
             className="primaryButton"
             disabled={!canSubmit}
+            title={mode === 'create' ? 'Create the project with the current settings and start working' : 'Save all changes to the project settings'}
           >
             {isLoadingDefaults ? (
               <>
@@ -564,7 +603,26 @@ export function ProjectForm({
         isOpen={isPresetModalOpen}
         onClose={() => setIsPresetModalOpen(false)}
         onSelect={applyPreset}
+        onLoadUserPreset={handleLoadUserPreset}
         currentPresetId={appliedPreset?.id}
+        userId={userId}
+        model={(formData.agentOpenaiModel as string) || 'claude-opus-4-6'}
+      />
+
+      {/* User Preset: Save modal */}
+      <SavePresetModal
+        isOpen={isSavePresetModalOpen}
+        onClose={() => setIsSavePresetModalOpen(false)}
+        formData={formData as unknown as Record<string, unknown>}
+        userId={userId}
+      />
+
+      {/* User Preset: Load drawer */}
+      <UserPresetDrawer
+        isOpen={isUserPresetDrawerOpen}
+        onClose={() => setIsUserPresetDrawerOpen(false)}
+        onLoad={handleLoadUserPreset}
+        userId={userId}
       />
 
       {/* Guardrail block modal */}

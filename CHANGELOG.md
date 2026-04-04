@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.5.0] - 2026-04-04
+
+### Added
+
+- **Recon Preset System** -- one-click recon configuration with 21 built-in presets covering common scanning scenarios. Each preset configures 328+ recon pipeline parameters (tool toggles, thresholds, rate limits, OSINT flags, etc.) in a single click:
+  - **Built-in Presets**: Full Pipeline Active/Passive/Maximum, Bug Bounty Quick Wins, Bug Bounty Deep Dive, API Security Audit, Infrastructure Mapper, OSINT Investigator, Web App Pentester, JS Secret Miner, Subdomain Takeover Hunter, Stealth Recon, CVE Hunter, Red Team Operator, Directory & Content Discovery, Cloud & External Exposure, Compliance & Header Audit, Secret & Credential Hunter, Parameter & Injection Surface, DNS & Email Security, Network Perimeter Large Scale
+  - **Recon Preset tab** in Recon Pipeline tab group (lightning bolt icon) opens a modal with card grid UI, expandable detail descriptions, and "Applied" badge tracking
+  - **Zod-validated schema** with 328 parameters covering all recon tools. Uses `.strip()` to prevent unknown key injection
+
+- **My Project Presets** -- save, load, and delete user project presets that capture the entire project configuration (recon pipeline, agent behavior, tool matrix, agent skills, CypherFix, and all other settings). Target-specific fields (domain, subdomains, IPs, RoE document, uploaded files) are automatically stripped for portability:
+  - **Save as Preset** button in project form header saves current config with name + description
+  - **Load Preset** button opens side drawer listing saved presets with merge-over-defaults loading
+  - Per-user storage in PostgreSQL (`UserProjectPreset` model)
+
+- **AI-Generated Presets** -- describe scanning goals in natural language and an LLM generates a validated recon preset. Two-step wizard (Describe -> Review) with enabled/disabled/tuned parameter summary:
+  - Supports all configured LLM providers (Anthropic, OpenAI, OpenRouter, OpenAI-compatible, Bedrock)
+  - System prompt with full recon parameter catalog guides the LLM
+  - Zod validation + JSON extraction pipeline with error details on failure
+  - Generated presets saved to My Project Presets collection
+
+- **Wiki documentation** -- new [Recon & Project Presets](https://github.com/samugit83/redamon/wiki/Recon-Presets) wiki page with full guide, 21-preset reference table, and AI generation walkthrough. Updated Creating a Project (16 tabs), Project Settings Reference, Running Reconnaissance, Home, and Sidebar
+
+---
+
 ## [3.4.0] - 2026-04-03
 
 ### Added

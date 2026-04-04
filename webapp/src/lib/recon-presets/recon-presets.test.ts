@@ -90,7 +90,7 @@ describe('getPresetById', () => {
 describe('JS Secret Miner preset', () => {
   test('has correct id and name', () => {
     expect(SECRET_MINER.id).toBe('secret-miner')
-    expect(SECRET_MINER.name).toBe('Secret Miner')
+    expect(SECRET_MINER.name).toBe('JS Secret Miner')
   })
 
   test('enables JS Recon module', () => {
@@ -3340,5 +3340,129 @@ describe('Preset merge logic', () => {
     const first = simulateApplyPreset(currentForm, SECRET_MINER)
     const second = simulateApplyPreset(first, SECRET_MINER)
     expect(second).toEqual(first)
+  })
+})
+
+// ============================================================
+// Cross-cutting system-wide validation
+// ============================================================
+
+describe('Preset system integrity', () => {
+  test('registry contains exactly 21 presets', () => {
+    expect(RECON_PRESETS).toHaveLength(21)
+  })
+
+  test('every preset has all required fields with correct types', () => {
+    for (const preset of RECON_PRESETS) {
+      expect(typeof preset.id).toBe('string')
+      expect(preset.id.length).toBeGreaterThan(0)
+      expect(typeof preset.name).toBe('string')
+      expect(preset.name.length).toBeGreaterThan(0)
+      expect(typeof preset.icon).toBe('string')
+      expect(typeof preset.shortDescription).toBe('string')
+      expect(preset.shortDescription.length).toBeGreaterThan(0)
+      expect(typeof preset.fullDescription).toBe('string')
+      expect(preset.fullDescription.length).toBeGreaterThan(0)
+      expect(typeof preset.parameters).toBe('object')
+      expect(Object.keys(preset.parameters).length).toBeGreaterThan(0)
+    }
+  })
+
+  test('all preset IDs are unique', () => {
+    const ids = RECON_PRESETS.map(p => p.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  test('all preset names are unique', () => {
+    const names = RECON_PRESETS.map(p => p.name)
+    expect(new Set(names).size).toBe(names.length)
+  })
+
+  test('every preset is findable by getPresetById', () => {
+    for (const preset of RECON_PRESETS) {
+      const found = getPresetById(preset.id)
+      expect(found).toBeDefined()
+      expect(found!.id).toBe(preset.id)
+    }
+  })
+
+  test('no preset contains em dashes in any text field', () => {
+    for (const preset of RECON_PRESETS) {
+      expect(preset.shortDescription).not.toContain('\u2014')
+      expect(preset.fullDescription).not.toContain('\u2014')
+      expect(preset.name).not.toContain('\u2014')
+    }
+  })
+
+  test('every preset fullDescription has all required section headers', () => {
+    const requiredHeaders = ['### Pipeline Goal', '### Who is this for?', '### What it enables', '### What it disables']
+    for (const preset of RECON_PRESETS) {
+      for (const header of requiredHeaders) {
+        expect(preset.fullDescription).toContain(header)
+      }
+    }
+  })
+
+  test('no preset overrides user-input fields (name, targetDomain, etc.)', () => {
+    const forbiddenKeys = [
+      'name', 'description', 'targetDomain', 'subdomainList', 'ipMode', 'targetIps',
+      'agentOpenaiModel', 'agentMaxIterations', 'agentInformationalSystemPrompt',
+      'agentExplSystemPrompt', 'agentPostExplSystemPrompt',
+      'roeEnabled', 'roeRawText', 'roeClientName',
+      'cypherfixRequireApproval', 'cypherfixGithubToken',
+      'hydraEnabled', 'hydraThreads',
+    ]
+    for (const preset of RECON_PRESETS) {
+      const params = preset.parameters as Record<string, unknown>
+      for (const key of forbiddenKeys) {
+        expect(params[key]).toBeUndefined()
+      }
+    }
+  })
+
+  test('every preset with scanModules sets a valid array', () => {
+    const validModules = ['domain_discovery', 'port_scan', 'http_probe', 'resource_enum', 'vuln_scan', 'js_recon']
+    for (const preset of RECON_PRESETS) {
+      const modules = preset.parameters.scanModules
+      if (modules) {
+        expect(Array.isArray(modules)).toBe(true)
+        for (const mod of modules) {
+          expect(validModules).toContain(mod)
+        }
+      }
+    }
+  })
+
+  test('applying any preset preserves user fields', () => {
+    const userForm = {
+      name: 'My Project',
+      targetDomain: 'example.com',
+      description: 'Test',
+      agentOpenaiModel: 'claude-opus-4-6',
+    }
+    for (const preset of RECON_PRESETS) {
+      const merged = { ...userForm, ...preset.parameters } as Record<string, unknown>
+      expect(merged.name).toBe('My Project')
+      expect(merged.targetDomain).toBe('example.com')
+      expect(merged.description).toBe('Test')
+      expect(merged.agentOpenaiModel).toBe('claude-opus-4-6')
+    }
+  })
+
+  test('applying any preset twice is idempotent', () => {
+    const form = { name: 'Test', targetDomain: 'example.com' }
+    for (const preset of RECON_PRESETS) {
+      const first = { ...form, ...preset.parameters }
+      const second = { ...first, ...preset.parameters }
+      expect(second).toEqual(first)
+    }
+  })
+
+  test('every preset with image field points to a valid SVG path', () => {
+    for (const preset of RECON_PRESETS) {
+      if (preset.image) {
+        expect(preset.image).toMatch(/^\/preset-[\w-]+\.svg$/)
+      }
+    }
   })
 })

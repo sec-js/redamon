@@ -122,7 +122,7 @@ Red team operators running authorized engagements where some active probing is a
     httpxProbeJarm: false,
     httpxProbeAsn: false,
     httpxProbeCdn: false,
-    httpxProbeHash: false,
+    httpxProbeHash: '',
     httpxIncludeResponse: false,
     httpxIncludeResponseHeaders: false,
     httpxFollowRedirects: true,
