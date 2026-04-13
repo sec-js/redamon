@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronDown, ShieldCheck, Info } from 'lucide-react'
+import { ChevronDown, ShieldCheck, Info, Play } from 'lucide-react'
 import { Toggle } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import { useProject } from '@/providers/ProjectProvider'
@@ -13,6 +13,8 @@ type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'use
 interface OsintEnrichmentSectionProps {
   data: FormData
   updateField: <K extends keyof FormData>(field: K, value: FormData[K]) => void
+  onRun?: () => void
+  onRunUncover?: () => void
 }
 
 interface KeyStatus {
@@ -25,7 +27,7 @@ interface KeyStatus {
   criminalIp: boolean
 }
 
-export function OsintEnrichmentSection({ data, updateField }: OsintEnrichmentSectionProps) {
+export function OsintEnrichmentSection({ data, updateField, onRun, onRunUncover }: OsintEnrichmentSectionProps) {
   const [isOpen, setIsOpen] = useState(true)
   const { userId } = useProject()
   const [keyStatus, setKeyStatus] = useState<KeyStatus | null>(null)
@@ -64,6 +66,22 @@ export function OsintEnrichmentSection({ data, updateField }: OsintEnrichmentSec
           <span className={styles.badgePassive}>Passive</span>
         </h2>
         <div className={styles.sectionHeaderRight}>
+          {onRun && data.osintEnrichmentEnabled && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onRun() }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                padding: '3px 8px', borderRadius: '4px',
+                border: '1px solid rgba(34, 197, 94, 0.3)',
+                backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: 500,
+              }}
+              title="Run OSINT Enrichment"
+            >
+              <Play size={10} /> Run partial recon
+            </button>
+          )}
           <div onClick={(e) => e.stopPropagation()}>
             <Toggle
               checked={data.osintEnrichmentEnabled}
@@ -294,10 +312,28 @@ export function OsintEnrichmentSection({ data, updateField }: OsintEnrichmentSec
                   Configure API keys for each engine in Global Settings.
                 </p>
               </div>
-              <Toggle
-                checked={data.uncoverEnabled}
-                onChange={(checked) => updateField('uncoverEnabled', checked)}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {onRunUncover && data.uncoverEnabled && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onRunUncover() }}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '4px',
+                      padding: '3px 8px', borderRadius: '4px',
+                      border: '1px solid rgba(34, 197, 94, 0.3)',
+                      backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                      color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: 500,
+                    }}
+                    title="Run Uncover"
+                  >
+                    <Play size={10} /> Run partial recon
+                  </button>
+                )}
+                <Toggle
+                  checked={data.uncoverEnabled}
+                  onChange={(checked) => updateField('uncoverEnabled', checked)}
+                />
+              </div>
             </div>
             {data.uncoverEnabled && (
               <div className={styles.fieldRow}>

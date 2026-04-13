@@ -227,6 +227,44 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    else if (toolId === 'JsRecon') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             WITH d
+             OPTIONAL MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+             WITH d, collect(DISTINCT b.url) AS baseurls
+             OPTIONAL MATCH (e:Endpoint {user_id: $uid, project_id: $pid})
+             WITH d, baseurls, count(DISTINCT e) AS endpointCount
+             RETURN d.name AS domain, baseurls, size(baseurls) AS baseurlCount, endpointCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const baseurls: string[] = record?.get('baseurls') || []
+          const baseurlCount = record?.get('baseurlCount')?.toNumber?.() ?? record?.get('baseurlCount') ?? 0
+          const endpointCount = record?.get('endpointCount')?.toNumber?.() ?? record?.get('endpointCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: 0,
+              existing_baseurls: baseurls,
+              existing_baseurls_count: baseurlCount,
+              existing_endpoints_count: endpointCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for JsRecon graph-inputs, falling back to settings:', err)
+      }
+    }
+
     else if (toolId === 'Gau') {
       try {
         const session = getSession()
@@ -396,6 +434,44 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    else if (toolId === 'SecurityChecks') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)-[:RESOLVES_TO]->(i:IP)
+             OPTIONAL MATCH (d)-[:RESOLVES_TO]->(di:IP)
+             WITH d, count(DISTINCT s) AS subCount,
+                  count(DISTINCT i) + count(DISTINCT di) AS ipCount
+             OPTIONAL MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+             WITH d, subCount, ipCount, count(DISTINCT b) AS baseurlCount
+             RETURN d.name AS domain, subCount, ipCount, baseurlCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const subCount = record?.get('subCount')?.toNumber?.() ?? record?.get('subCount') ?? 0
+          const ipCount = record?.get('ipCount')?.toNumber?.() ?? record?.get('ipCount') ?? 0
+          const baseurlCount = record?.get('baseurlCount')?.toNumber?.() ?? record?.get('baseurlCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: subCount,
+              existing_ips_count: ipCount,
+              existing_baseurls_count: baseurlCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for SecurityChecks graph-inputs, falling back to settings:', err)
+      }
+    }
+
     else if (toolId === 'Httpx') {
       try {
         const session = getSession()
@@ -437,6 +513,168 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         }
       } catch (err) {
         console.warn('Neo4j query failed for Httpx graph-inputs, falling back to settings:', err)
+      }
+    }
+
+    else if (toolId === 'Nuclei') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             WITH d
+             OPTIONAL MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+             WITH d, collect(DISTINCT b.url) AS baseurls
+             OPTIONAL MATCH (e:Endpoint {user_id: $uid, project_id: $pid})
+             WITH d, baseurls, count(DISTINCT e) AS endpointCount
+             RETURN d.name AS domain, baseurls, size(baseurls) AS baseurlCount, endpointCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const baseurls: string[] = record?.get('baseurls') || []
+          const baseurlCount = record?.get('baseurlCount')?.toNumber?.() ?? record?.get('baseurlCount') ?? 0
+          const endpointCount = record?.get('endpointCount')?.toNumber?.() ?? record?.get('endpointCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: 0,
+              existing_baseurls: baseurls,
+              existing_baseurls_count: baseurlCount,
+              existing_endpoints_count: endpointCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for Nuclei graph-inputs, falling back to settings:', err)
+      }
+    }
+
+    else if (toolId === 'Shodan') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)-[:RESOLVES_TO]->(i:IP)
+             OPTIONAL MATCH (d)-[:RESOLVES_TO]->(di:IP)
+             WITH d, count(DISTINCT i) + count(DISTINCT di) AS ipCount
+             RETURN d.name AS domain, ipCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const ipCount = record?.get('ipCount')?.toNumber?.() ?? record?.get('ipCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: 0,
+              existing_ips_count: ipCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for Shodan graph-inputs, falling back to settings:', err)
+      }
+    }
+
+    else if (toolId === 'Urlscan') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)
+             RETURN d.name AS domain, count(s) AS subdomainCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const subdomainCount = record?.get('subdomainCount')?.toNumber?.() ?? record?.get('subdomainCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: subdomainCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for Urlscan graph-inputs, falling back to settings:', err)
+      }
+    }
+
+    else if (toolId === 'Uncover') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)
+             RETURN d.name AS domain, count(s) AS subdomainCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const subdomainCount = record?.get('subdomainCount')?.toNumber?.() ?? record?.get('subdomainCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: subdomainCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for Uncover graph-inputs, falling back to settings:', err)
+      }
+    }
+
+    else if (toolId === 'OsintEnrichment') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)-[:RESOLVES_TO]->(i:IP)
+             OPTIONAL MATCH (d)-[:RESOLVES_TO]->(di:IP)
+             WITH d, count(DISTINCT s) AS subCount,
+                  count(DISTINCT i) + count(DISTINCT di) AS ipCount
+             RETURN d.name AS domain, subCount, ipCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const subCount = record?.get('subCount')?.toNumber?.() ?? record?.get('subCount') ?? 0
+          const ipCount = record?.get('ipCount')?.toNumber?.() ?? record?.get('ipCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: subCount,
+              existing_ips_count: ipCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for OsintEnrichment graph-inputs, falling back to settings:', err)
       }
     }
 

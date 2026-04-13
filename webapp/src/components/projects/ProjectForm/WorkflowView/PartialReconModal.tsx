@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Play, Loader2, ArrowRight } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { Play, Loader2, ArrowRight, Upload, FileText, Trash2 } from 'lucide-react'
 import { Modal } from '@/components/ui'
 import type { GraphInputs, PartialReconParams, UserTargets } from '@/lib/recon-types'
 import { SECTION_INPUT_MAP, SECTION_NODE_MAP, SECTION_ENRICH_MAP } from '../nodeMapping'
@@ -87,6 +87,44 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Targets are loaded from the graph (BaseURLs from prior HTTP probing). ' +
     'You can also provide custom URLs below. ' +
     'Endpoint and BaseURL nodes are merged into the existing graph.',
+  JsRecon:
+    'Comprehensive JavaScript reconnaissance scanner. Downloads JS files from discovered URLs ' +
+    'and runs 6 analysis modules: secret detection (100+ patterns with live validation), endpoint extraction, ' +
+    'source map discovery, dependency confusion checks, DOM sink analysis, and framework detection. ' +
+    'Targets are loaded from the graph (BaseURLs + Endpoints from prior crawling). ' +
+    'You can also provide custom URLs below. ' +
+    'Secret, Endpoint, and JsReconFinding nodes are merged into the existing graph.',
+  Nuclei:
+    'Template-based vulnerability scanner detecting CVEs, misconfigurations, exposed panels, and web application vulnerabilities (SQLi, XSS, RCE). ' +
+    'Targets are loaded from the graph (BaseURLs + Endpoints from prior phases). ' +
+    'You can also provide custom URLs below. ' +
+    'Vulnerability, CVE, Endpoint, Parameter, MitreData, and Capec nodes are merged into the existing graph.',
+  SecurityChecks:
+    'Runs custom security checks on discovered infrastructure: Direct IP Access, TLS/SSL certificate expiry, ' +
+    'Security Headers (Referrer-Policy, Permissions-Policy, COOP/CORP/COEP), Authentication (HTTPS, cookie flags), ' +
+    'DNS Security (SPF, DMARC, DNSSEC, zone transfer), Exposed Services (admin ports, databases), and Application Security. ' +
+    'Targets are loaded from the graph (IPs, subdomains, BaseURLs from prior phases). ' +
+    'Vulnerability nodes are merged into the existing graph.',
+  Shodan:
+    'Passive OSINT enrichment using the Shodan API (or free InternetDB fallback). ' +
+    'Enriches discovered IPs with geolocation, OS, ISP, open ports, service banners, reverse DNS hostnames, and known CVEs. ' +
+    'Targets are loaded from the graph (IPs from prior Subdomain Discovery). ' +
+    'Port, Service, Subdomain, ExternalDomain, DNSRecord, Vulnerability, and CVE nodes are merged into the existing graph.',
+  Urlscan:
+    'Passive OSINT enrichment using URLScan.io historical scan data. ' +
+    'Discovers additional subdomains, IPs, ASN info, domain age, TLS certificates, server technologies, and screenshots. ' +
+    'Also enriches existing BaseURLs with screenshot URLs and creates Endpoint/Parameter nodes from discovered URL paths. ' +
+    'Subdomain, ExternalDomain, IP, Endpoint, and Parameter nodes are merged into the existing graph.',
+  Uncover:
+    'Multi-engine passive discovery using ProjectDiscovery Uncover. ' +
+    'Searches Shodan, Censys, FOFA, ZoomEye, Netlas, CriminalIP, and other engines simultaneously ' +
+    'to discover additional IPs, subdomains, open ports, and URLs associated with the target domain. ' +
+    'IP, Subdomain, Port, and Endpoint nodes are merged into the existing graph.',
+  OsintEnrichment:
+    'Passive OSINT enrichment using multiple APIs in parallel: Censys, FOFA, OTX, Netlas, VirusTotal, ZoomEye, and CriminalIP. ' +
+    'Enriches discovered IPs with open ports, services, certificates, threat intelligence, malware associations, DNS records, and vulnerabilities. ' +
+    'Targets are loaded from the graph (IPs from prior Subdomain Discovery). Only sub-tools with valid API keys will run. ' +
+    'Subdomain, Port, Service, ExternalDomain, DNSRecord, ThreatPulse, Malware, Certificate, Vulnerability, and CVE nodes are merged into the existing graph.',
 }
 
 // --- Validation helpers ---
@@ -203,6 +241,12 @@ export function PartialReconModal({
   const [urlAttachTo, setUrlAttachTo] = useState<string | null>(null)
   const [includeGraphTargets, setIncludeGraphTargets] = useState(true)
 
+  // JS file upload state (JsRecon only)
+  const [uploadedJsFiles, setUploadedJsFiles] = useState<{ name: string; size: number; uploaded_at: string }[]>([])
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const jsFileInputRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     if (!isOpen || !toolId || !projectId) return
     setLoadingInputs(true)
@@ -213,6 +257,8 @@ export function PartialReconModal({
     setCustomUrls('')
     setUrlAttachTo(null)
     setIncludeGraphTargets(true)
+    setUploadedJsFiles([])
+    setUploadError(null)
     fetch(`/api/recon/${projectId}/graph-inputs/${toolId}`)
       .then(res => res.ok ? res.json() : null)
       .then((data: GraphInputs | null) => {
@@ -223,13 +269,61 @@ export function PartialReconModal({
         setGraphInputs({ domain: targetDomain || null, existing_subdomains_count: 0, existing_ips_count: 0, existing_ports_count: 0, source: 'settings' })
         setLoadingInputs(false)
       })
+    // Fetch existing uploaded JS files for JsRecon
+    if (toolId === 'JsRecon') {
+      fetch(`/api/js-recon/${projectId}/upload`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => setUploadedJsFiles(data?.files || []))
+        .catch(() => setUploadedJsFiles([]))
+    }
   }, [isOpen, toolId, projectId, targetDomain])
+
+  // JS file upload handlers (JsRecon only)
+  const handleJsFileUpload = useCallback(async (file: File) => {
+    if (!projectId) return
+    setIsUploading(true)
+    setUploadError(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch(`/api/js-recon/${projectId}/upload`, { method: 'POST', body: formData })
+      if (!res.ok) {
+        const data = await res.json()
+        setUploadError(data.error || 'Upload failed')
+        return
+      }
+      const listRes = await fetch(`/api/js-recon/${projectId}/upload`)
+      if (listRes.ok) {
+        const data = await listRes.json()
+        setUploadedJsFiles(data.files || [])
+      }
+    } catch {
+      setUploadError('Upload failed')
+    } finally {
+      setIsUploading(false)
+      if (jsFileInputRef.current) jsFileInputRef.current.value = ''
+    }
+  }, [projectId])
+
+  const handleJsFileDelete = useCallback(async (filename: string) => {
+    if (!projectId) return
+    try {
+      await fetch(`/api/js-recon/${projectId}/upload?name=${encodeURIComponent(filename)}`, { method: 'DELETE' })
+      const listRes = await fetch(`/api/js-recon/${projectId}/upload`)
+      if (listRes.ok) {
+        const data = await listRes.json()
+        setUploadedJsFiles(data.files || [])
+      }
+    } catch { /* ignore */ }
+  }, [projectId])
 
   const domain = graphInputs?.domain || targetDomain || ''
   const isPortScanner = toolId === 'Naabu' || toolId === 'Masscan'
   const isNmap = toolId === 'Nmap'
   const isHttpx = toolId === 'Httpx'
-  const isResourceEnum = toolId === 'Katana' || toolId === 'Hakrawler' || toolId === 'Jsluice' || toolId === 'Ffuf' || toolId === 'Kiterunner'
+  const isNuclei = toolId === 'Nuclei'
+  const isSecurityChecks = toolId === 'SecurityChecks'
+  const isResourceEnum = toolId === 'Katana' || toolId === 'Hakrawler' || toolId === 'Jsluice' || toolId === 'Ffuf' || toolId === 'Kiterunner' || toolId === 'JsRecon' || isNuclei
   const isArjun = toolId === 'Arjun'
   const isGau = toolId === 'Gau'
   const isParamSpider = toolId === 'ParamSpider'
@@ -350,14 +444,23 @@ export function PartialReconModal({
   const hasNoGraphTargets = (isPortScanner && !loadingInputs && (graphInputs?.existing_ips_count ?? 0) === 0)
     || (isNmap && !loadingInputs && (graphInputs?.existing_ports_count ?? 0) === 0)
     || (isHttpx && !loadingInputs && (graphInputs?.existing_ports_count ?? 0) === 0 && (graphInputs?.existing_subdomains_count ?? 0) === 0)
-    || (isResourceEnum && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0)
+    || (toolId === 'JsRecon' && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0 && (graphInputs?.existing_endpoints_count ?? 0) === 0 && uploadedJsFiles.length === 0)
+    || (isNuclei && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0 && (graphInputs?.existing_endpoints_count ?? 0) === 0)
+    || (isResourceEnum && !isNuclei && toolId !== 'JsRecon' && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0)
     || (isArjun && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0 && (graphInputs?.existing_endpoints_count ?? 0) === 0)
-  const hasNoCustomTargets = (!hasSubdomainInput || !customSubdomains.trim()) && (!hasIpInput || !customIps.trim()) && !customPorts.trim() && (!hasUrlInput || !customUrls.trim())
+    || (isSecurityChecks && !loadingInputs && (graphInputs?.existing_ips_count ?? 0) === 0 && (graphInputs?.existing_subdomains_count ?? 0) === 0 && (graphInputs?.existing_baseurls_count ?? 0) === 0)
+    || (toolId === 'Shodan' && !loadingInputs && (graphInputs?.existing_ips_count ?? 0) === 0)
+    || (toolId === 'OsintEnrichment' && !loadingInputs && (graphInputs?.existing_ips_count ?? 0) === 0)
+  const hasJsUploads = toolId === 'JsRecon' && uploadedJsFiles.length > 0
+  const hasNoCustomTargets = (!hasSubdomainInput || !customSubdomains.trim()) && (!hasIpInput || !customIps.trim()) && !customPorts.trim() && (!hasUrlInput || !customUrls.trim()) && !hasJsUploads
   const noTargetsToScan = hasUserInputs && !isGau && !isParamSpider && !includeGraphTargets && hasNoCustomTargets
   const nmapNoPorts = isNmap && !includeGraphTargets && !customPorts.trim()
   const httpxNoPorts = isHttpx && !includeGraphTargets && !customPorts.trim() && !customSubdomains.trim()
-  const resourceEnumNoUrls = isResourceEnum && !includeGraphTargets && !customUrls.trim()
+  const resourceEnumNoUrls = isResourceEnum && !includeGraphTargets && !customUrls.trim() && !hasJsUploads
   const arjunNoUrls = isArjun && !includeGraphTargets && !customUrls.trim()
+  const securityChecksNoTargets = isSecurityChecks && hasNoGraphTargets
+  const shodanNoIps = toolId === 'Shodan' && !loadingInputs && (graphInputs?.existing_ips_count ?? 0) === 0
+  const osintNoIps = toolId === 'OsintEnrichment' && !loadingInputs && (graphInputs?.existing_ips_count ?? 0) === 0
 
   return (
     <Modal
@@ -388,16 +491,26 @@ export function PartialReconModal({
                 ? `${domain || 'No domain'} (${graphInputs?.existing_ips_count ?? 0} IPs, ${graphInputs?.existing_ports_count ?? 0} ports, ${graphInputs?.existing_subdomains_count ?? 0} subdomains)`
                 : isHttpx
                 ? `${domain || 'No domain'} (${graphInputs?.existing_subdomains_count ?? 0} subdomains, ${graphInputs?.existing_ports_count ?? 0} ports, ${graphInputs?.existing_baseurls_count ?? 0} existing URLs)`
+                : toolId === 'JsRecon'
+                ? `${domain || 'No domain'} (${graphInputs?.existing_baseurls_count ?? 0} BaseURLs, ${graphInputs?.existing_endpoints_count ?? 0} Endpoints${uploadedJsFiles.length ? `, ${uploadedJsFiles.length} uploaded` : ''})`
+                : isNuclei
+                ? `${domain || 'No domain'} (${graphInputs?.existing_baseurls_count ?? 0} BaseURLs, ${graphInputs?.existing_endpoints_count ?? 0} Endpoints)`
                 : isResourceEnum
                 ? `${domain || 'No domain'} (${graphInputs?.existing_baseurls_count ?? 0} BaseURLs)`
                 : isArjun
                 ? `${domain || 'No domain'} (${graphInputs?.existing_baseurls_count ?? 0} BaseURLs, ${graphInputs?.existing_endpoints_count ?? 0} Endpoints)`
+                : isSecurityChecks
+                ? `${domain || 'No domain'} (${graphInputs?.existing_subdomains_count ?? 0} subdomains, ${graphInputs?.existing_ips_count ?? 0} IPs, ${graphInputs?.existing_baseurls_count ?? 0} BaseURLs)`
                 : isGau || isParamSpider
                 ? `${domain || 'No domain'} (${graphInputs?.existing_subdomains_count ?? 0} subdomains)`
                 : toolId === 'Naabu'
                 ? `${domain || 'No domain'} (${graphInputs?.existing_ips_count ?? 0} IPs, ${graphInputs?.existing_subdomains_count ?? 0} subdomains)`
                 : toolId === 'Masscan'
                 ? `${domain || 'No domain'} (${graphInputs?.existing_ips_count ?? 0} IPs)`
+                : toolId === 'Shodan'
+                ? `${domain || 'No domain'} (${graphInputs?.existing_ips_count ?? 0} IPs)`
+                : toolId === 'OsintEnrichment'
+                ? `${domain || 'No domain'} (${graphInputs?.existing_ips_count ?? 0} IPs, ${graphInputs?.existing_subdomains_count ?? 0} subdomains)`
                 : domain || 'No domain configured'}
             </div>
           </div>
@@ -469,10 +582,20 @@ export function PartialReconModal({
               ? 'No ports found in graph. Run Naabu first to discover open ports, or provide custom targets below.'
               : isHttpx
               ? 'No subdomains or ports found in graph. Run Subdomain Discovery + Port Scanning first, or provide custom subdomains below.'
+              : toolId === 'JsRecon'
+              ? 'No BaseURLs or Endpoints found in graph. Run HTTP Probing (Httpx) and Resource Enumeration (Katana/Hakrawler) first, or provide custom URLs below.'
+              : isNuclei
+              ? 'No BaseURLs or Endpoints found in graph. Run HTTP Probing (Httpx) and Resource Enumeration first, or provide custom URLs below.'
               : isResourceEnum
               ? 'No BaseURLs found in graph. Run HTTP Probing (Httpx) first to discover live URLs, or provide custom URLs below.'
               : isArjun
               ? 'No BaseURLs or Endpoints found in graph. Run Resource Enumeration (Katana/Hakrawler) first, or provide custom URLs below.'
+              : isSecurityChecks
+              ? 'No IPs, subdomains, or BaseURLs found in graph. Run Subdomain Discovery and HTTP Probing first to populate the graph.'
+              : toolId === 'Shodan'
+              ? 'No IPs found in graph. Run Subdomain Discovery first to populate IPs for Shodan enrichment.'
+              : toolId === 'OsintEnrichment'
+              ? 'No IPs found in graph. Run Subdomain Discovery first to populate IPs for OSINT enrichment.'
               : 'No IPs found in graph. Run Subdomain Discovery first to populate the graph, or provide custom targets below.'}
           </div>
         )}
@@ -507,6 +630,10 @@ export function PartialReconModal({
           }}>
             {toolId === 'Jsluice'
               ? 'Jsluice requires URLs to analyze. Provide custom URLs below or enable graph targets (which include existing Endpoints from Katana/Hakrawler).'
+              : toolId === 'JsRecon'
+              ? 'JS Recon requires URLs to analyze for JavaScript files. Provide custom URLs below or enable graph targets (which include existing BaseURLs + Endpoints).'
+              : isNuclei
+              ? 'Nuclei requires URLs to scan. Provide custom URLs below or enable graph targets (which include existing BaseURLs + Endpoints from prior phases).'
               : `${toolId} requires URLs to crawl. Provide custom URLs below or enable graph targets (which include existing BaseURLs from Httpx).`}
           </div>
         )}
@@ -642,7 +769,7 @@ export function PartialReconModal({
               onChange={e => setCustomUrls(e.target.value)}
               placeholder={isArjun
                 ? 'https://example.com/api/users\nhttps://example.com/admin/settings'
-                : toolId === 'Jsluice'
+                : toolId === 'Jsluice' || toolId === 'JsRecon'
                 ? 'https://example.com/assets/app.js\nhttps://cdn.example.com/bundle.min.js'
                 : 'https://example.com\nhttps://api.example.com:8443'}
               rows={2}
@@ -659,6 +786,10 @@ export function PartialReconModal({
                 ? 'Full endpoint URLs to test for hidden query/body parameters (e.g. /api/users, /login, /admin/settings).'
                 : toolId === 'Jsluice'
                 ? 'Full URLs to JS files. Will be downloaded and analyzed for hidden endpoints and secrets.'
+                : toolId === 'JsRecon'
+                ? 'Full URLs to JS files or pages containing JS. Will be downloaded and analyzed for secrets, endpoints, source maps, and more.'
+                : isNuclei
+                ? 'Full URLs (http/https). Will be scanned for vulnerabilities, misconfigurations, and CVEs.'
                 : 'Full URLs (http/https). Will be crawled to discover endpoints and parameters.'}</div>
             )}
 
@@ -691,6 +822,71 @@ export function PartialReconModal({
                     ? `Discovered endpoints will be linked to ${urlAttachTo}`
                     : 'URLs will be tracked via a UserInput node (no BaseURL link)'}
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* === Section E - JS File Upload (JsRecon only) === */}
+        {toolId === 'JsRecon' && projectId && (
+          <div>
+            <div style={labelStyle}>Upload JS files (optional)</div>
+            <div style={{ fontSize: '10px', color: 'var(--text-muted, #64748b)', marginBottom: '6px' }}>
+              Upload .js, .mjs, .map, or .json files directly (from Burp Suite, mobile APKs, DevTools, or authenticated areas).
+              These are analyzed alongside any URLs above.
+            </div>
+            <input
+              ref={jsFileInputRef}
+              type="file"
+              accept=".js,.mjs,.map,.json"
+              multiple
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const files = e.target.files
+                if (files) Array.from(files).forEach(f => handleJsFileUpload(f))
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => jsFileInputRef.current?.click()}
+              disabled={isUploading || isStarting}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                padding: '5px 10px', borderRadius: '6px', fontSize: '11px',
+                border: '1px solid var(--border-color, #334155)',
+                backgroundColor: 'var(--bg-secondary, #1e293b)',
+                color: 'var(--text-primary, #e2e8f0)',
+                cursor: isUploading || isStarting ? 'not-allowed' : 'pointer',
+                opacity: isUploading || isStarting ? 0.5 : 1,
+              }}
+            >
+              {isUploading ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={12} />}
+              {isUploading ? ' Uploading...' : ' Upload JS Files'}
+            </button>
+
+            {uploadError && (
+              <div style={{ fontSize: '10px', color: '#f87171', marginTop: '4px' }}>{uploadError}</div>
+            )}
+
+            {uploadedJsFiles.length > 0 && (
+              <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--text-secondary, #94a3b8)' }}>
+                <div style={{ marginBottom: '3px' }}>
+                  {uploadedJsFiles.length} file(s) uploaded ({(uploadedJsFiles.reduce((sum, f) => sum + f.size, 0) / 1024).toFixed(0)} KB total)
+                </div>
+                {uploadedJsFiles.map(f => (
+                  <div key={f.name} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '1px 0' }}>
+                    <FileText size={10} />
+                    <span>{f.name} ({(f.size / 1024).toFixed(1)} KB)</span>
+                    <button
+                      type="button"
+                      onClick={() => handleJsFileDelete(f.name)}
+                      style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '1px', display: 'inline-flex' }}
+                      title={`Delete ${f.name}`}
+                    >
+                      <Trash2 size={10} />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -730,14 +926,14 @@ export function PartialReconModal({
           <button
             type="button"
             onClick={handleRun}
-            disabled={!domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls || arjunNoUrls}
+            disabled={!domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls || arjunNoUrls || securityChecksNoTargets || shodanNoIps || osintNoIps}
             style={{
               padding: '8px 16px', borderRadius: '6px', border: 'none',
               backgroundColor: '#3b82f6', color: '#fff',
-              cursor: !domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls || arjunNoUrls ? 'not-allowed' : 'pointer',
+              cursor: !domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls || arjunNoUrls || securityChecksNoTargets || shodanNoIps || osintNoIps ? 'not-allowed' : 'pointer',
               fontSize: '13px',
               display: 'flex', alignItems: 'center', gap: '6px',
-              opacity: !domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls || arjunNoUrls ? 0.5 : 1,
+              opacity: !domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls || arjunNoUrls || securityChecksNoTargets || shodanNoIps || osintNoIps ? 0.5 : 1,
             }}
           >
             {isStarting ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}

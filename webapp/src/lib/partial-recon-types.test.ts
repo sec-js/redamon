@@ -46,8 +46,36 @@ describe('PARTIAL_RECON_SUPPORTED_TOOLS', () => {
     expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('Jsluice')).toBe(true)
   })
 
+  test('contains JsRecon', () => {
+    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('JsRecon')).toBe(true)
+  })
+
+  test('contains Shodan', () => {
+    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('Shodan')).toBe(true)
+  })
+
+  test('contains OsintEnrichment', () => {
+    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('OsintEnrichment')).toBe(true)
+  })
+
+  test('contains SecurityChecks', () => {
+    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('SecurityChecks')).toBe(true)
+  })
+
+  test('contains Urlscan', () => {
+    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('Urlscan')).toBe(true)
+  })
+
+  test('contains Uncover', () => {
+    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('Uncover')).toBe(true)
+  })
+
+  test('contains Nuclei', () => {
+    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('Nuclei')).toBe(true)
+  })
+
   test('does not contain unsupported tools', () => {
-    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('Nuclei')).toBe(false)
+    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('GVM')).toBe(false)
   })
 })
 
@@ -91,6 +119,41 @@ describe('PARTIAL_RECON_PHASE_MAP', () => {
   test('has Jsluice phases', () => {
     expect(PARTIAL_RECON_PHASE_MAP['Jsluice']).toHaveLength(1)
     expect(PARTIAL_RECON_PHASE_MAP['Jsluice'][0]).toBe('Resource Enumeration')
+  })
+
+  test('has JsRecon phases', () => {
+    expect(PARTIAL_RECON_PHASE_MAP['JsRecon']).toHaveLength(1)
+    expect(PARTIAL_RECON_PHASE_MAP['JsRecon'][0]).toBe('JS Recon')
+  })
+
+  test('has Shodan phases', () => {
+    expect(PARTIAL_RECON_PHASE_MAP['Shodan']).toHaveLength(1)
+    expect(PARTIAL_RECON_PHASE_MAP['Shodan'][0]).toBe('Shodan Enrichment')
+  })
+
+  test('has OsintEnrichment phases', () => {
+    expect(PARTIAL_RECON_PHASE_MAP['OsintEnrichment']).toHaveLength(1)
+    expect(PARTIAL_RECON_PHASE_MAP['OsintEnrichment'][0]).toBe('OSINT Enrichment')
+  })
+
+  test('has SecurityChecks phases', () => {
+    expect(PARTIAL_RECON_PHASE_MAP['SecurityChecks']).toHaveLength(1)
+    expect(PARTIAL_RECON_PHASE_MAP['SecurityChecks'][0]).toBe('Security Checks')
+  })
+
+  test('has Urlscan phases', () => {
+    expect(PARTIAL_RECON_PHASE_MAP['Urlscan']).toHaveLength(1)
+    expect(PARTIAL_RECON_PHASE_MAP['Urlscan'][0]).toBe('URLScan Enrichment')
+  })
+
+  test('has Uncover phases', () => {
+    expect(PARTIAL_RECON_PHASE_MAP['Uncover']).toHaveLength(1)
+    expect(PARTIAL_RECON_PHASE_MAP['Uncover'][0]).toBe('Uncover Expansion')
+  })
+
+  test('has Nuclei phases', () => {
+    expect(PARTIAL_RECON_PHASE_MAP['Nuclei']).toHaveLength(1)
+    expect(PARTIAL_RECON_PHASE_MAP['Nuclei'][0]).toBe('Vulnerability Scanning')
   })
 
   test('each supported tool has a phase entry', () => {
@@ -471,6 +534,132 @@ describe('PartialReconParams type shape', () => {
     }
     expect(params.user_targets).toBeUndefined()
   })
+
+  test('JsRecon params with structured user_targets (URLs)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'JsRecon',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+      user_targets: {
+        subdomains: [], ips: [], ip_attach_to: null,
+        urls: ['https://example.com/assets/app.js', 'https://example.com/assets/vendor.js'],
+        url_attach_to: 'https://example.com',
+      },
+    }
+    expect(params.tool_id).toBe('JsRecon')
+    expect(params.user_targets?.urls).toHaveLength(2)
+    expect(params.user_targets?.url_attach_to).toBe('https://example.com')
+  })
+
+  test('JsRecon params with generic URLs (no attach)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'JsRecon',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+      user_targets: {
+        subdomains: [], ips: [], ip_attach_to: null,
+        urls: ['https://example.com/assets/app.js'], url_attach_to: null,
+      },
+    }
+    expect(params.user_targets?.url_attach_to).toBeNull()
+  })
+
+  test('JsRecon params without user_targets (graph only)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'JsRecon',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+    }
+    expect(params.user_targets).toBeUndefined()
+  })
+
+  test('Shodan params (graph only, no user inputs)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'Shodan',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+    }
+    expect(params.tool_id).toBe('Shodan')
+    expect(params.user_targets).toBeUndefined()
+  })
+
+  test('OsintEnrichment params (graph only, no user inputs)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'OsintEnrichment',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+    }
+    expect(params.tool_id).toBe('OsintEnrichment')
+    expect(params.user_targets).toBeUndefined()
+  })
+
+  test('SecurityChecks params (graph only, no user inputs)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'SecurityChecks',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+    }
+    expect(params.tool_id).toBe('SecurityChecks')
+    expect(params.user_targets).toBeUndefined()
+  })
+
+  test('Urlscan params (graph only, no user inputs)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'Urlscan',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+    }
+    expect(params.tool_id).toBe('Urlscan')
+    expect(params.user_targets).toBeUndefined()
+  })
+
+  test('Nuclei params with structured user_targets (URLs)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'Nuclei',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+      user_targets: {
+        subdomains: [], ips: [], ip_attach_to: null,
+        urls: ['https://example.com', 'https://api.example.com:8443'],
+        url_attach_to: 'https://example.com',
+      },
+    }
+    expect(params.tool_id).toBe('Nuclei')
+    expect(params.user_targets?.urls).toHaveLength(2)
+    expect(params.user_targets?.url_attach_to).toBe('https://example.com')
+  })
+
+  test('Nuclei params with generic URLs (no attach)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'Nuclei',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+      user_targets: {
+        subdomains: [], ips: [], ip_attach_to: null,
+        urls: ['https://example.com/login'], url_attach_to: null,
+      },
+    }
+    expect(params.user_targets?.url_attach_to).toBeNull()
+  })
+
+  test('Nuclei params without user_targets (graph only)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'Nuclei',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+    }
+    expect(params.user_targets).toBeUndefined()
+  })
+
+  test('Uncover params (domain only, no user inputs)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'Uncover',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+    }
+    expect(params.tool_id).toBe('Uncover')
+    expect(params.user_targets).toBeUndefined()
+  })
 })
 
 describe('GraphInputs with existing_subdomains', () => {
@@ -484,5 +673,32 @@ describe('GraphInputs with existing_subdomains', () => {
     }
     expect(inputs.existing_subdomains).toHaveLength(2)
     expect(inputs.existing_subdomains).toContain('api.example.com')
+  })
+
+  test('Nuclei graph inputs include BaseURLs list and Endpoints count', () => {
+    const inputs: GraphInputs = {
+      domain: 'example.com',
+      existing_subdomains_count: 0,
+      existing_baseurls_count: 3,
+      existing_baseurls: ['https://example.com', 'https://api.example.com', 'https://www.example.com'],
+      existing_endpoints_count: 42,
+      source: 'graph',
+    }
+    expect(inputs.existing_baseurls).toHaveLength(3)
+    expect(inputs.existing_baseurls).toContain('https://api.example.com')
+    expect(inputs.existing_endpoints_count).toBe(42)
+  })
+
+  test('SecurityChecks graph inputs include subdomains, IPs, and BaseURLs counts', () => {
+    const inputs: GraphInputs = {
+      domain: 'example.com',
+      existing_subdomains_count: 3,
+      existing_ips_count: 5,
+      existing_baseurls_count: 2,
+      source: 'graph',
+    }
+    expect(inputs.existing_subdomains_count).toBe(3)
+    expect(inputs.existing_ips_count).toBe(5)
+    expect(inputs.existing_baseurls_count).toBe(2)
   })
 })

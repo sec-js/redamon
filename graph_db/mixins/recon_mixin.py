@@ -3678,5 +3678,128 @@ class ReconMixin:
                     "source": "graph" if record["domain"] else "settings",
                 }
 
+            elif tool_id == "JsRecon":
+                # Get domain, BaseURL count/list, and Endpoint count for JS Recon
+                result = session.run(
+                    """
+                    OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+                    WITH d
+                    OPTIONAL MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+                    WITH d, collect(DISTINCT b.url) AS baseurls
+                    OPTIONAL MATCH (e:Endpoint {user_id: $uid, project_id: $pid})
+                    WITH d, baseurls, count(DISTINCT e) AS endpoint_count
+                    RETURN d.name AS domain, baseurls, size(baseurls) AS baseurl_count, endpoint_count
+                    """,
+                    uid=user_id, pid=project_id,
+                )
+                record = result.single()
+                return {
+                    "domain": record["domain"] if record["domain"] else None,
+                    "existing_subdomains_count": 0,
+                    "existing_baseurls": record["baseurls"] or [],
+                    "existing_baseurls_count": record["baseurl_count"] or 0,
+                    "existing_endpoints_count": record["endpoint_count"] or 0,
+                    "source": "graph" if record["domain"] else "settings",
+                }
+
+            elif tool_id == "Nuclei":
+                # Get domain, BaseURL count/list, and Endpoint count for Nuclei vuln scanning
+                result = session.run(
+                    """
+                    OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+                    WITH d
+                    OPTIONAL MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+                    WITH d, collect(DISTINCT b.url) AS baseurls
+                    OPTIONAL MATCH (e:Endpoint {user_id: $uid, project_id: $pid})
+                    WITH d, baseurls, count(DISTINCT e) AS endpoint_count
+                    RETURN d.name AS domain, baseurls, size(baseurls) AS baseurl_count, endpoint_count
+                    """,
+                    uid=user_id, pid=project_id,
+                )
+                record = result.single()
+                return {
+                    "domain": record["domain"] if record["domain"] else None,
+                    "existing_subdomains_count": 0,
+                    "existing_baseurls": record["baseurls"] or [],
+                    "existing_baseurls_count": record["baseurl_count"] or 0,
+                    "existing_endpoints_count": record["endpoint_count"] or 0,
+                    "source": "graph" if record["domain"] else "settings",
+                }
+
+            elif tool_id == "Shodan":
+                # Get domain and IP count for Shodan passive OSINT enrichment
+                result = session.run(
+                    """
+                    OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+                    OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)-[:RESOLVES_TO]->(i:IP)
+                    OPTIONAL MATCH (d)-[:RESOLVES_TO]->(di:IP)
+                    WITH d, count(DISTINCT i) + count(DISTINCT di) AS ip_count
+                    RETURN d.name AS domain, ip_count
+                    """,
+                    uid=user_id, pid=project_id,
+                )
+                record = result.single()
+                return {
+                    "domain": record["domain"] if record["domain"] else None,
+                    "existing_subdomains_count": 0,
+                    "existing_ips_count": record["ip_count"] or 0,
+                    "source": "graph" if record["domain"] else "settings",
+                }
+
+            elif tool_id == "Urlscan":
+                # Get domain and subdomain count for URLScan passive enrichment
+                result = session.run(
+                    """
+                    OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+                    OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)
+                    RETURN d.name AS domain, count(s) AS subdomain_count
+                    """,
+                    uid=user_id, pid=project_id,
+                )
+                record = result.single()
+                return {
+                    "domain": record["domain"] if record["domain"] else None,
+                    "existing_subdomains_count": record["subdomain_count"] or 0,
+                    "source": "graph" if record["domain"] else "settings",
+                }
+
+            elif tool_id == "Uncover":
+                # Get domain and subdomain count for Uncover multi-engine expansion
+                result = session.run(
+                    """
+                    OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+                    OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)
+                    RETURN d.name AS domain, count(s) AS subdomain_count
+                    """,
+                    uid=user_id, pid=project_id,
+                )
+                record = result.single()
+                return {
+                    "domain": record["domain"] if record["domain"] else None,
+                    "existing_subdomains_count": record["subdomain_count"] or 0,
+                    "source": "graph" if record["domain"] else "settings",
+                }
+
+            elif tool_id == "OsintEnrichment":
+                # Get domain, subdomain count, and IP count for OSINT enrichment
+                result = session.run(
+                    """
+                    OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+                    OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)-[:RESOLVES_TO]->(i:IP)
+                    OPTIONAL MATCH (d)-[:RESOLVES_TO]->(di:IP)
+                    WITH d, count(DISTINCT s) AS sub_count,
+                         count(DISTINCT i) + count(DISTINCT di) AS ip_count
+                    RETURN d.name AS domain, sub_count, ip_count
+                    """,
+                    uid=user_id, pid=project_id,
+                )
+                record = result.single()
+                return {
+                    "domain": record["domain"] if record["domain"] else None,
+                    "existing_subdomains_count": record["sub_count"] or 0,
+                    "existing_ips_count": record["ip_count"] or 0,
+                    "source": "graph" if record["domain"] else "settings",
+                }
+
             return {"error": f"Unknown tool_id: {tool_id}"}
 

@@ -3094,5 +3094,1548 @@ class TestRunJsluice(unittest.TestCase):
         self.assertEqual(call_args[0][1], {})
 
 
+class TestRunJsRecon(unittest.TestCase):
+    """Tests for run_jsrecon using module-level mocks."""
+
+    def _run_with_mocks(self, config, neo4j_connected=True, graph_endpoints=None, graph_baseurls=None):
+        """Helper that sets up all mocks and runs run_jsrecon."""
+        mock_settings = MagicMock()
+        mock_settings.return_value = {
+            "JS_RECON_ENABLED": True, "JS_RECON_MAX_FILES": 500,
+            "JS_RECON_TIMEOUT": 900, "JS_RECON_CONCURRENCY": 10,
+            "JS_RECON_VALIDATE_KEYS": True,
+        }
+
+        # Mock run_js_recon: mutates combined_result by adding 'js_recon' key
+        def mock_js_recon_fn(combined_result, settings=None):
+            combined_result['js_recon'] = {
+                'scan_metadata': {'mode': 'post_recon', 'js_files_analyzed': 3, 'duration_seconds': 5.0},
+                'secrets': [
+                    {"name": "AWS Key", "severity": "critical", "confidence": "high",
+                     "source_url": "https://example.com/js/app.js", "matched_text": "AKIA..."},
+                ],
+                'endpoints': [
+                    {"full_url": "https://example.com/api/v1/users", "source_js": "https://example.com/js/app.js"},
+                    {"full_url": "https://example.com/api/v1/config", "source_js": "https://example.com/js/app.js"},
+                ],
+                'summary': {'secrets_by_severity': {'critical': 1}, 'endpoints_discovered': 2},
+            }
+            return combined_result
+
+        mock_run_js_recon = MagicMock(side_effect=mock_js_recon_fn)
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = neo4j_connected
+        mock_client.update_graph_from_js_recon.return_value = {
+            "file_nodes_created": 1, "findings_created": 0,
+            "secrets_created": 1, "endpoints_created": 2,
+            "relationships_created": 4, "errors": [],
+        }
+
+        _graph_endpoints = graph_endpoints if graph_endpoints is not None else [
+            {"url": "https://example.com/js/app.js"},
+            {"url": "https://example.com/js/vendor.js"},
+        ]
+        _graph_baseurls = graph_baseurls if graph_baseurls is not None else [
+            {"url": "https://example.com"},
+        ]
+        _graph_subdomains = ["www.example.com"]
+
+        def mock_session_run(query, **kwargs):
+            result = MagicMock()
+            if "Endpoint" in query and "baseurl" in query:
+                records = []
+                for ep_data in _graph_endpoints:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=ep_data: d.get(key)
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+            elif "BaseURL" in query and "b.url" in query:
+                records = []
+                for bu_data in _graph_baseurls:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=bu_data: d.get(key)
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+            elif "HAS_SUBDOMAIN" in query:
+                record = MagicMock()
+                record.__getitem__ = lambda self, key: _graph_subdomains
+                result.single.return_value = record
+                result.__iter__ = lambda self: iter([])
+            else:
+                result.__iter__ = lambda self: iter([])
+                result.single.return_value = None
+            return result
+
+        mock_session = MagicMock()
+        mock_session.run = mock_session_run
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.driver = mock_driver
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+
+        mock_js_recon_module = MagicMock()
+        mock_js_recon_module.run_js_recon = mock_run_js_recon
+
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'recon.js_recon': mock_js_recon_module,
+            'graph_db': mock_graph_db,
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            pr.run_jsrecon(config)
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        return {
+            "settings": mock_settings,
+            "run_js_recon": mock_run_js_recon,
+            "neo4j_client": mock_client,
+            "neo4j_cls": mock_neo4j_cls,
+        }
+
+    def test_basic_scan_graph_only(self):
+        """Graph-only scan loads BaseURLs/Endpoints and runs JS Recon."""
+        mocks = self._run_with_mocks({"domain": "example.com", "user_inputs": []})
+        mocks["run_js_recon"].assert_called_once()
+        mocks["neo4j_client"].update_graph_from_js_recon.assert_called_once()
+
+    def test_user_urls_injected(self):
+        """User-provided URLs are added to JS Recon targets."""
+        mocks = self._run_with_mocks({
+            "domain": "example.com",
+            "user_inputs": [],
+            "user_targets": {"urls": ["https://example.com/js/custom.js"], "url_attach_to": None},
+        })
+        mocks["run_js_recon"].assert_called_once()
+        call_args = mocks["run_js_recon"].call_args
+        combined_result = call_args[0][0]
+        discovered_urls = combined_result.get("resource_enum", {}).get("discovered_urls", [])
+        self.assertIn("https://example.com/js/custom.js", discovered_urls)
+
+    def test_user_urls_only_no_graph(self):
+        """With graph targets disabled, only user URLs are analyzed."""
+        mocks = self._run_with_mocks({
+            "domain": "example.com",
+            "user_inputs": [],
+            "user_targets": {"urls": ["https://example.com/js/app.js"], "url_attach_to": None},
+            "include_graph_targets": False,
+        })
+        mocks["run_js_recon"].assert_called_once()
+        call_args = mocks["run_js_recon"].call_args
+        combined_result = call_args[0][0]
+        discovered_urls = combined_result.get("resource_enum", {}).get("discovered_urls", [])
+        self.assertEqual(len(discovered_urls), 1)
+        self.assertIn("https://example.com/js/app.js", discovered_urls)
+
+    def test_invalid_urls_skipped(self):
+        """Invalid URLs are skipped, only valid ones reach JS Recon."""
+        mocks = self._run_with_mocks({
+            "domain": "example.com",
+            "user_inputs": [],
+            "user_targets": {"urls": ["not-a-url", "ftp://bad.com", "https://example.com/js/good.js"], "url_attach_to": None},
+        })
+        mocks["run_js_recon"].assert_called_once()
+        call_args = mocks["run_js_recon"].call_args
+        combined_result = call_args[0][0]
+        discovered_urls = combined_result.get("resource_enum", {}).get("discovered_urls", [])
+        self.assertIn("https://example.com/js/good.js", discovered_urls)
+        self.assertNotIn("not-a-url", discovered_urls)
+        self.assertNotIn("ftp://bad.com", discovered_urls)
+
+    def test_no_targets_exits(self):
+        """Exits with code 1 when no BaseURLs/Endpoints in graph and no user URLs."""
+        with self.assertRaises(SystemExit) as cm:
+            self._run_with_mocks(
+                {"domain": "example.com", "user_inputs": [], "include_graph_targets": False},
+                graph_endpoints=[], graph_baseurls=[],
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_generic_user_urls_create_userinput(self):
+        """When url_attach_to is null, a UserInput node should be created."""
+        mocks = self._run_with_mocks({
+            "domain": "example.com",
+            "user_inputs": [],
+            "user_targets": {"urls": ["https://example.com/js/custom.js"], "url_attach_to": None},
+        })
+        mocks["neo4j_client"].create_user_input_node.assert_called_once()
+        call_kwargs = mocks["neo4j_client"].create_user_input_node.call_args
+        user_input_data = call_kwargs[1].get("user_input_data") or call_kwargs[0][1]
+        self.assertEqual(user_input_data["input_type"], "urls")
+        self.assertEqual(user_input_data["tool_id"], "JsRecon")
+
+    def test_attached_user_urls_no_userinput(self):
+        """When url_attach_to is set, no UserInput node should be created."""
+        mocks = self._run_with_mocks({
+            "domain": "example.com",
+            "user_inputs": [],
+            "user_targets": {"urls": ["https://example.com/js/custom.js"], "url_attach_to": "https://example.com"},
+        })
+        mocks["neo4j_client"].create_user_input_node.assert_not_called()
+
+    def test_js_recon_enabled_force(self):
+        """JS_RECON_ENABLED is force-set to True in settings."""
+        mocks = self._run_with_mocks({"domain": "example.com", "user_inputs": []})
+        mocks["run_js_recon"].assert_called_once()
+        call_kwargs = mocks["run_js_recon"].call_args
+        settings = call_kwargs[1].get("settings") or call_kwargs[0][1]
+        self.assertTrue(settings.get("JS_RECON_ENABLED"))
+
+    def test_combined_result_structure(self):
+        """The combined_result passed to run_js_recon has expected structure."""
+        mocks = self._run_with_mocks({"domain": "example.com", "user_inputs": []})
+        call_args = mocks["run_js_recon"].call_args
+        combined_result = call_args[0][0]
+        self.assertEqual(combined_result["domain"], "example.com")
+        self.assertIn("resource_enum", combined_result)
+        self.assertIn("discovered_urls", combined_result["resource_enum"])
+        self.assertIn("http_probe", combined_result)
+        self.assertIn("dns", combined_result)
+        self.assertIn("metadata", combined_result)
+        self.assertEqual(combined_result["metadata"]["project_id"], "proj1")
+
+
+class TestRunShodan(unittest.TestCase):
+    """Tests for run_shodan using module-level mocks."""
+
+    def _run_with_mocks(self, config, neo4j_connected=True, graph_ips=None):
+        """Helper that sets up all mocks and runs run_shodan."""
+        mock_settings = MagicMock()
+        mock_settings.return_value = {
+            "SHODAN_ENABLED": True,
+            "SHODAN_HOST_LOOKUP": True,
+            "SHODAN_REVERSE_DNS": True,
+            "SHODAN_DOMAIN_DNS": False,
+            "SHODAN_PASSIVE_CVES": True,
+            "SHODAN_API_KEY": "test-key",
+            "SHODAN_KEY_ROTATOR": None,
+        }
+
+        # Mock run_shodan_enrichment: mutates combined_result by adding 'shodan' key
+        def mock_enrichment_fn(combined_result, settings):
+            combined_result['shodan'] = {
+                'hosts': [
+                    {'ip': '1.2.3.4', 'os': 'Linux', 'isp': 'TestISP', 'services': [
+                        {'port': 80, 'transport': 'tcp'},
+                        {'port': 443, 'transport': 'tcp'},
+                    ]},
+                ],
+                'reverse_dns': {'1.2.3.4': ['web.example.com']},
+                'domain_dns': {},
+                'cves': [{'ip': '1.2.3.4', 'cve_id': 'CVE-2024-1234', 'source': 'shodan'}],
+            }
+            return combined_result
+
+        mock_run_enrichment = MagicMock(side_effect=mock_enrichment_fn)
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = neo4j_connected
+        mock_client.update_graph_from_shodan.return_value = {
+            "ips_enriched": 1, "ports_created": 2, "services_created": 2,
+            "subdomains_created": 1, "dns_records_created": 0,
+            "vulnerabilities_created": 0, "cves_created": 1,
+            "relationships_created": 5, "errors": [],
+        }
+
+        _graph_ips = graph_ips if graph_ips is not None else [
+            {"address": "1.2.3.4", "version": "ipv4"},
+        ]
+
+        def mock_session_run(query, **kwargs):
+            result = MagicMock()
+            if "RESOLVES_TO" in query and "IP" in query:
+                records = []
+                for ip_data in _graph_ips:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=ip_data: d.get(key)
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+            else:
+                result.__iter__ = lambda self: iter([])
+            return result
+
+        mock_session = MagicMock()
+        mock_session.run = mock_session_run
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.driver = mock_driver
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+
+        mock_shodan_module = MagicMock()
+        mock_shodan_module.run_shodan_enrichment = mock_run_enrichment
+
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'recon.shodan_enrich': mock_shodan_module,
+            'graph_db': mock_graph_db,
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            pr.run_shodan(config)
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        return {
+            "settings": mock_settings,
+            "run_enrichment": mock_run_enrichment,
+            "neo4j_client": mock_client,
+        }
+
+    def test_basic_shodan_run(self):
+        """Shodan enrichment runs with graph IPs and updates graph."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        mocks["run_enrichment"].assert_called_once()
+        mocks["neo4j_client"].update_graph_from_shodan.assert_called_once()
+
+    def test_shodan_forces_enabled(self):
+        """Shodan is force-enabled for partial recon."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        call_args = mocks["run_enrichment"].call_args
+        combined_result = call_args[0][0]
+        settings = call_args[0][1]
+        self.assertTrue(settings.get("SHODAN_ENABLED"))
+
+    def test_shodan_no_ips_skips(self):
+        """Shodan skips enrichment when no IPs found in graph."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config, graph_ips=[])
+        mocks["run_enrichment"].assert_not_called()
+
+    def test_shodan_neo4j_unreachable(self):
+        """Shodan logs warning when Neo4j is unreachable for graph update."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config, neo4j_connected=False)
+        mocks["neo4j_client"].update_graph_from_shodan.assert_not_called()
+
+    def test_shodan_include_graph_targets_false(self):
+        """When include_graph_targets=false, Shodan has no IPs and skips."""
+        config = {"domain": "example.com", "include_graph_targets": False}
+        mocks = self._run_with_mocks(config)
+        # With no graph targets and no user inputs, combined_result has 0 IPs -> skip
+        mocks["run_enrichment"].assert_not_called()
+
+    def test_shodan_combined_result_structure(self):
+        """The combined_result passed to run_shodan_enrichment has correct structure."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        call_args = mocks["run_enrichment"].call_args
+        combined_result = call_args[0][0]
+        self.assertEqual(combined_result["domain"], "example.com")
+        self.assertIn("dns", combined_result)
+        self.assertIn("domain", combined_result["dns"])
+        self.assertIn("subdomains", combined_result["dns"])
+        self.assertIn("ips", combined_result["dns"]["domain"])
+
+    def test_shodan_graph_update_receives_shodan_data(self):
+        """Graph update receives combined_result with shodan key."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        call_args = mocks["neo4j_client"].update_graph_from_shodan.call_args
+        recon_data = call_args[1].get("recon_data") or call_args[0][0]
+        self.assertIn("shodan", recon_data)
+        self.assertIn("hosts", recon_data["shodan"])
+        self.assertIn("reverse_dns", recon_data["shodan"])
+        self.assertIn("cves", recon_data["shodan"])
+
+    def test_shodan_empty_enrichment_skips_graph(self):
+        """When Shodan enrichment returns empty data, graph update is skipped."""
+        mock_settings = MagicMock()
+        mock_settings.return_value = {
+            "SHODAN_ENABLED": True, "SHODAN_HOST_LOOKUP": True,
+            "SHODAN_REVERSE_DNS": True, "SHODAN_DOMAIN_DNS": False,
+            "SHODAN_PASSIVE_CVES": True, "SHODAN_API_KEY": "",
+            "SHODAN_KEY_ROTATOR": None,
+        }
+
+        # Enrichment returns combined_result WITHOUT shodan key
+        def mock_enrichment_empty(combined_result, settings):
+            return combined_result
+
+        mock_run_enrichment = MagicMock(side_effect=mock_enrichment_empty)
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = True
+
+        _graph_ips = [{"address": "1.2.3.4", "version": "ipv4"}]
+
+        def mock_session_run(query, **kwargs):
+            result = MagicMock()
+            if "RESOLVES_TO" in query and "IP" in query:
+                records = []
+                for ip_data in _graph_ips:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=ip_data: d.get(key)
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+            else:
+                result.__iter__ = lambda self: iter([])
+            return result
+
+        mock_session = MagicMock()
+        mock_session.run = mock_session_run
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.driver = mock_driver
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+        mock_shodan_module = MagicMock()
+        mock_shodan_module.run_shodan_enrichment = mock_run_enrichment
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'recon.shodan_enrich': mock_shodan_module,
+            'graph_db': mock_graph_db,
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            pr.run_shodan({"domain": "example.com"})
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        mock_client.update_graph_from_shodan.assert_not_called()
+
+    def test_shodan_multiple_ips(self):
+        """Shodan processes multiple IPs from domain and subdomains."""
+        config = {"domain": "example.com"}
+        graph_ips = [
+            {"address": "1.2.3.4", "version": "ipv4"},
+            {"address": "5.6.7.8", "version": "ipv4"},
+            {"address": "9.10.11.12", "version": "ipv4"},
+        ]
+        mocks = self._run_with_mocks(config, graph_ips=graph_ips)
+        mocks["run_enrichment"].assert_called_once()
+        call_args = mocks["run_enrichment"].call_args
+        combined_result = call_args[0][0]
+        self.assertEqual(combined_result["domain"], "example.com")
+
+
+class TestShodanMainDispatcher(unittest.TestCase):
+    """Test that main() correctly dispatches to run_shodan."""
+
+    def test_main_dispatches_shodan(self):
+        """Main function dispatches to run_shodan for tool_id=Shodan."""
+        config = {"tool_id": "Shodan", "domain": "example.com"}
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(config, f)
+            f.flush()
+            config_path = f.name
+
+        os.environ["PARTIAL_RECON_CONFIG"] = config_path
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            with patch.object(pr, 'run_shodan') as mock_run:
+                pr.main()
+                mock_run.assert_called_once_with(config)
+        finally:
+            del os.environ["PARTIAL_RECON_CONFIG"]
+            os.unlink(config_path)
+
+
+class TestRunOsintEnrichment(unittest.TestCase):
+    """Tests for run_osint_enrichment using module-level mocks."""
+
+    def _run_with_mocks(self, config, neo4j_connected=True, graph_ips=None, enabled_tools=None):
+        """Helper that sets up all mocks and runs run_osint_enrichment."""
+        settings_dict = {
+            "OSINT_ENRICHMENT_ENABLED": True,
+            "OTX_ENABLED": True,
+            "OTX_API_KEY": "",
+            "CENSYS_ENABLED": False,
+            "CENSYS_API_TOKEN": "",
+            "FOFA_ENABLED": False,
+            "FOFA_API_KEY": "",
+            "NETLAS_ENABLED": False,
+            "NETLAS_API_KEY": "",
+            "VIRUSTOTAL_ENABLED": False,
+            "VIRUSTOTAL_API_KEY": "",
+            "ZOOMEYE_ENABLED": False,
+            "ZOOMEYE_API_KEY": "",
+            "CRIMINALIP_ENABLED": False,
+            "CRIMINALIP_API_KEY": "",
+        }
+        if enabled_tools:
+            for k, v in enabled_tools.items():
+                settings_dict[k] = v
+
+        mock_settings = MagicMock(return_value=settings_dict)
+
+        # Mock OTX enrichment function
+        mock_otx_fn = MagicMock(return_value={
+            "ip_reports": [{"ip": "1.2.3.4", "general": {"country_name": "US"}}],
+            "domain_reports": [],
+        })
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = neo4j_connected
+        mock_client.update_graph_from_otx.return_value = {
+            "ips_enriched": 1, "subdomains_merged": 0,
+            "threat_pulses_merged": 0, "relationships_created": 2, "errors": [],
+        }
+
+        _graph_ips = graph_ips if graph_ips is not None else [
+            {"address": "1.2.3.4", "version": "ipv4"},
+        ]
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        # Create mock modules for OSINT sub-tools
+        mock_otx_module = MagicMock()
+        mock_otx_module.run_otx_enrichment_isolated = mock_otx_fn
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'graph_db': mock_graph_db,
+            'recon.otx_enrich': mock_otx_module,
+            'recon.censys_enrich': MagicMock(),
+            'recon.fofa_enrich': MagicMock(),
+            'recon.netlas_enrich': MagicMock(),
+            'recon.virustotal_enrich': MagicMock(),
+            'recon.zoomeye_enrich': MagicMock(),
+            'recon.criminalip_enrich': MagicMock(),
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        # Build recon_data based on graph_ips
+        recon_data = {
+            "domain": "example.com",
+            "dns": {
+                "domain": {"ips": {"ipv4": [ip["address"] for ip in _graph_ips if ip.get("version") == "ipv4"], "ipv6": []}, "has_records": True},
+                "subdomains": {},
+            },
+        }
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+
+            # Patch _build_recon_data_from_graph after reload
+            pr._build_recon_data_from_graph = MagicMock(return_value=recon_data)
+
+            pr.run_osint_enrichment(config)
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        return {
+            "settings": mock_settings,
+            "neo4j_client": mock_client,
+            "otx_fn": mock_otx_fn,
+        }
+
+    def test_osint_enrichment_basic(self):
+        """OSINT enrichment runs enabled sub-tools and updates graph."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        mocks["neo4j_client"].verify_connection.assert_called_once()
+
+    def test_osint_enrichment_no_ips_skips(self):
+        """OSINT enrichment skips when no IPs in graph."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config, graph_ips=[])
+        # No graph update when no IPs
+        mocks["neo4j_client"].verify_connection.assert_not_called()
+
+    def test_osint_enrichment_neo4j_unreachable(self):
+        """OSINT enrichment logs warning when Neo4j is unreachable."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config, neo4j_connected=False)
+        mocks["neo4j_client"].update_graph_from_otx.assert_not_called()
+
+    def test_osint_enrichment_no_enabled_tools(self):
+        """OSINT enrichment exits gracefully when no sub-tools enabled."""
+        config = {"domain": "example.com"}
+        disabled = {"OTX_ENABLED": False}
+        mocks = self._run_with_mocks(config, enabled_tools=disabled)
+        mocks["neo4j_client"].verify_connection.assert_not_called()
+
+
+class TestRunSecurityChecks(unittest.TestCase):
+    """Tests for run_security_checks_partial using module-level mocks."""
+
+    def _run_with_mocks(self, config, neo4j_connected=True, graph_ips=None,
+                        graph_subdomains=None, graph_baseurls=None,
+                        security_findings=None):
+        """Helper that sets up all mocks and runs run_security_checks_partial."""
+        mock_settings = MagicMock()
+        mock_settings.return_value = {
+            "SECURITY_CHECK_ENABLED": True,
+            "SECURITY_CHECK_DIRECT_IP_HTTP": True,
+            "SECURITY_CHECK_DIRECT_IP_HTTPS": True,
+            "SECURITY_CHECK_IP_API_EXPOSED": True,
+            "SECURITY_CHECK_WAF_BYPASS": True,
+            "SECURITY_CHECK_TLS_EXPIRING_SOON": True,
+            "SECURITY_CHECK_TLS_EXPIRY_DAYS": 30,
+            "SECURITY_CHECK_MISSING_REFERRER_POLICY": True,
+            "SECURITY_CHECK_MISSING_PERMISSIONS_POLICY": True,
+            "SECURITY_CHECK_MISSING_COOP": True,
+            "SECURITY_CHECK_MISSING_CORP": True,
+            "SECURITY_CHECK_MISSING_COEP": True,
+            "SECURITY_CHECK_CACHE_CONTROL_MISSING": True,
+            "SECURITY_CHECK_LOGIN_NO_HTTPS": True,
+            "SECURITY_CHECK_SESSION_NO_SECURE": True,
+            "SECURITY_CHECK_SESSION_NO_HTTPONLY": True,
+            "SECURITY_CHECK_BASIC_AUTH_NO_TLS": True,
+            "SECURITY_CHECK_SPF_MISSING": True,
+            "SECURITY_CHECK_DMARC_MISSING": True,
+            "SECURITY_CHECK_DNSSEC_MISSING": True,
+            "SECURITY_CHECK_ZONE_TRANSFER": True,
+            "SECURITY_CHECK_ADMIN_PORT_EXPOSED": True,
+            "SECURITY_CHECK_DATABASE_EXPOSED": True,
+            "SECURITY_CHECK_REDIS_NO_AUTH": True,
+            "SECURITY_CHECK_KUBERNETES_API_EXPOSED": True,
+            "SECURITY_CHECK_SMTP_OPEN_RELAY": True,
+            "SECURITY_CHECK_CSP_UNSAFE_INLINE": True,
+            "SECURITY_CHECK_INSECURE_FORM_ACTION": True,
+            "SECURITY_CHECK_NO_RATE_LIMITING": True,
+            "SECURITY_CHECK_TIMEOUT": 10,
+            "SECURITY_CHECK_MAX_WORKERS": 10,
+        }
+
+        _findings = security_findings if security_findings is not None else [
+            {
+                "category": "direct_ip_access",
+                "check": "direct_ip_http",
+                "severity": "medium",
+                "target": "1.2.3.4",
+                "description": "Direct IP access over HTTP returns content",
+            },
+        ]
+
+        def mock_security_checks_fn(recon_data, enabled_checks, timeout=10,
+                                    tls_expiry_days=30, max_workers=10):
+            return {"security_checks": {"findings": _findings}}
+
+        mock_run_security_checks = MagicMock(side_effect=mock_security_checks_fn)
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = neo4j_connected
+        mock_client.update_graph_from_vuln_scan.return_value = {
+            "vulnerabilities_created": len(_findings),
+            "vulnerabilities_updated": 0,
+            "errors": [],
+        }
+
+        _graph_ips = graph_ips if graph_ips is not None else [
+            {"address": "1.2.3.4", "version": "ipv4"},
+        ]
+        _graph_subs = graph_subdomains if graph_subdomains is not None else [
+            {"subdomain": "www.example.com", "address": "1.2.3.4", "version": "ipv4"},
+        ]
+        _graph_urls = graph_baseurls if graph_baseurls is not None else [
+            {"url": "https://www.example.com", "status_code": 200, "host": "www.example.com", "content_type": "text/html"},
+        ]
+
+        def mock_session_run(query, **kwargs):
+            result = MagicMock()
+            if "RESOLVES_TO" in query and "HAS_SUBDOMAIN" in query and "RETURN s.name" in query:
+                # Subdomain + IP query
+                records = []
+                for sub_data in _graph_subs:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=sub_data: d.get(key)
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+            elif "RESOLVES_TO" in query and "IP" in query and "HAS_SUBDOMAIN" not in query:
+                # Domain -> IP query
+                records = []
+                for ip_data in _graph_ips:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=ip_data: d.get(key)
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+            elif "collect(DISTINCT s.name)" in query:
+                # Subdomains list query
+                record = MagicMock()
+                record.__getitem__ = lambda self, key: [s["subdomain"] for s in _graph_subs] if key == "subdomains" else None
+                result.single.return_value = record
+                result.__iter__ = lambda self: iter([])
+            elif "BaseURL" in query and "HAS_ENDPOINT" not in query:
+                # BaseURL query
+                records = []
+                for url_data in _graph_urls:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=url_data: d.get(key)
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+            elif "HAS_ENDPOINT" in query:
+                # Endpoint query
+                result.__iter__ = lambda self: iter([])
+            else:
+                result.__iter__ = lambda self: iter([])
+                result.single.return_value = None
+            return result
+
+        mock_session = MagicMock()
+        mock_session.run = mock_session_run
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.driver = mock_driver
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+
+        mock_helpers = MagicMock()
+        mock_helpers.run_security_checks = mock_run_security_checks
+
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'recon.helpers': mock_helpers,
+            'graph_db': mock_graph_db,
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            pr.run_security_checks_partial(config)
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        return {
+            "settings": mock_settings,
+            "run_security_checks": mock_run_security_checks,
+            "neo4j_client": mock_client,
+        }
+
+    def test_basic_security_checks_run(self):
+        """Security checks run with graph targets and update graph."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        mocks["run_security_checks"].assert_called_once()
+        mocks["neo4j_client"].update_graph_from_vuln_scan.assert_called_once()
+
+    def test_security_checks_forces_enabled(self):
+        """Security checks force-enable SECURITY_CHECK_ENABLED."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        call_args = mocks["run_security_checks"].call_args
+        enabled_checks = call_args[1].get("enabled_checks") or call_args[0][1]
+        # All checks should be True (from default settings)
+        self.assertTrue(all(enabled_checks.values()))
+
+    def test_security_checks_passes_correct_params(self):
+        """Security checks pass timeout, tls_expiry_days, max_workers from settings."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        call_kwargs = mocks["run_security_checks"].call_args[1]
+        self.assertEqual(call_kwargs.get("timeout"), 10)
+        self.assertEqual(call_kwargs.get("tls_expiry_days"), 30)
+        self.assertEqual(call_kwargs.get("max_workers"), 10)
+
+    def test_security_checks_no_targets_exits(self):
+        """Security checks exit when graph has no IPs, subdomains, or BaseURLs."""
+        config = {"domain": "example.com"}
+        with self.assertRaises(SystemExit):
+            self._run_with_mocks(config, graph_ips=[], graph_subdomains=[], graph_baseurls=[])
+
+    def test_security_checks_neo4j_unreachable_exits(self):
+        """Security checks exit when Neo4j is unreachable (can't build targets from graph)."""
+        config = {"domain": "example.com"}
+        with self.assertRaises(SystemExit):
+            self._run_with_mocks(config, neo4j_connected=False)
+
+    def test_security_checks_graph_update_receives_findings(self):
+        """Graph update receives the merged security check results."""
+        findings = [
+            {"category": "tls_ssl", "check": "tls_expiring_soon", "severity": "high",
+             "target": "www.example.com", "description": "Certificate expires in 5 days"},
+            {"category": "dns_security", "check": "spf_missing", "severity": "medium",
+             "target": "example.com", "description": "No SPF record found"},
+        ]
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config, security_findings=findings)
+        # Verify update_graph_from_vuln_scan was called
+        mocks["neo4j_client"].update_graph_from_vuln_scan.assert_called_once()
+        # Verify the recon_data passed has security_checks merged into vuln_scan
+        call_args = mocks["neo4j_client"].update_graph_from_vuln_scan.call_args
+        recon_data = call_args[1].get("recon_data") or call_args[0][0]
+        self.assertIn("vuln_scan", recon_data)
+        self.assertIn("security_checks", recon_data["vuln_scan"])
+        self.assertEqual(len(recon_data["vuln_scan"]["security_checks"]["findings"]), 2)
+
+    def test_security_checks_no_findings(self):
+        """Security checks complete successfully when no findings are produced."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config, security_findings=[])
+        mocks["run_security_checks"].assert_called_once()
+        mocks["neo4j_client"].update_graph_from_vuln_scan.assert_called_once()
+
+
+class TestRunUrlscan(unittest.TestCase):
+    """Tests for run_urlscan using module-level mocks."""
+
+    def _run_with_mocks(self, config, neo4j_connected=True,
+                        discovery_stats=None, enrichment_stats=None,
+                        urlscan_data=None):
+        """Helper that sets up all mocks and runs run_urlscan."""
+        mock_settings = MagicMock()
+        mock_settings.return_value = {
+            "URLSCAN_ENABLED": False,
+            "URLSCAN_API_KEY": "",
+            "URLSCAN_MAX_RESULTS": 5000,
+            "URLSCAN_KEY_ROTATOR": None,
+        }
+
+        _urlscan_data = urlscan_data if urlscan_data is not None else {
+            "results_count": 3,
+            "subdomains_discovered": ["www.example.com", "api.example.com"],
+            "ips_discovered": ["1.2.3.4", "5.6.7.8"],
+            "domain_age_days": 365,
+            "apex_domain_age_days": 400,
+            "urls_with_paths": [
+                {"full_url": "https://www.example.com/api/v1", "base_url": "https://www.example.com",
+                 "path": "/api/v1", "params": {}},
+            ],
+            "entries": [
+                {"url": "https://www.example.com", "domain": "www.example.com", "ip": "1.2.3.4",
+                 "asn": "AS1234", "asn_name": "TestASN", "country": "US",
+                 "server": "nginx", "status": "200", "title": "Test",
+                 "tls_issuer": "Let's Encrypt", "tls_valid_days": 90,
+                 "tls_valid_from": "", "tls_age_days": None,
+                 "domain_age_days": 365, "screenshot_url": "https://urlscan.io/screenshots/test.png",
+                 "scan_time": "2024-01-01T00:00:00Z"},
+            ],
+            "external_domains": [
+                {"domain": "cdn.external.com", "source": "urlscan"},
+            ],
+        }
+
+        mock_run_discovery = MagicMock(return_value=_urlscan_data)
+
+        _discovery_stats = discovery_stats or {
+            "subdomains_created": 2, "ips_enriched": 2,
+            "domain_enriched": True, "relationships_created": 3, "errors": [],
+        }
+        _enrichment_stats = enrichment_stats or {
+            "baseurls_enriched": 1, "baseurls_not_found": 0,
+            "endpoints_created": 1, "endpoints_skipped": 0,
+            "parameters_created": 0, "relationships_created": 1, "errors": [],
+        }
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = neo4j_connected
+        mock_client.update_graph_from_urlscan_discovery.return_value = _discovery_stats
+        mock_client.update_graph_from_urlscan_enrichment.return_value = _enrichment_stats
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+
+        mock_urlscan_module = MagicMock()
+        mock_urlscan_module.run_urlscan_discovery_only = mock_run_discovery
+
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'recon.urlscan_enrich': mock_urlscan_module,
+            'graph_db': mock_graph_db,
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            pr.run_urlscan(config)
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        return {
+            "settings": mock_settings,
+            "run_discovery": mock_run_discovery,
+            "neo4j_client": mock_client,
+        }
+
+    def test_basic_urlscan_run(self):
+        """URLScan enrichment runs and updates both discovery and enrichment graphs."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        mocks["run_discovery"].assert_called_once()
+        mocks["neo4j_client"].update_graph_from_urlscan_discovery.assert_called_once()
+        mocks["neo4j_client"].update_graph_from_urlscan_enrichment.assert_called_once()
+
+    def test_urlscan_forces_enabled(self):
+        """URLScan is force-enabled for partial recon even when disabled in settings."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        call_args = mocks["run_discovery"].call_args
+        domain = call_args[0][0]
+        settings = call_args[0][1]
+        self.assertEqual(domain, "example.com")
+        self.assertTrue(settings.get("URLSCAN_ENABLED"))
+
+    def test_urlscan_no_results_skips_graph(self):
+        """URLScan skips graph update when no results returned."""
+        config = {"domain": "example.com"}
+        empty_data = {"results_count": 0, "subdomains_discovered": [], "ips_discovered": [],
+                      "urls_with_paths": [], "entries": [], "external_domains": []}
+        mocks = self._run_with_mocks(config, urlscan_data=empty_data)
+        mocks["neo4j_client"].update_graph_from_urlscan_discovery.assert_not_called()
+        mocks["neo4j_client"].update_graph_from_urlscan_enrichment.assert_not_called()
+
+    def test_urlscan_empty_data_skips_graph(self):
+        """URLScan skips graph update when discovery returns empty dict."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config, urlscan_data={})
+        mocks["neo4j_client"].update_graph_from_urlscan_discovery.assert_not_called()
+
+    def test_urlscan_neo4j_unreachable(self):
+        """URLScan logs warning when Neo4j is unreachable for graph update."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config, neo4j_connected=False)
+        mocks["neo4j_client"].update_graph_from_urlscan_discovery.assert_not_called()
+        mocks["neo4j_client"].update_graph_from_urlscan_enrichment.assert_not_called()
+
+    def test_urlscan_passes_domain_correctly(self):
+        """URLScan passes the correct domain to run_urlscan_discovery_only."""
+        config = {"domain": "test.io"}
+        mocks = self._run_with_mocks(config)
+        call_args = mocks["run_discovery"].call_args[0]
+        self.assertEqual(call_args[0], "test.io")
+
+    def test_urlscan_combined_result_structure(self):
+        """URLScan builds proper combined_result for graph update methods."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        disc_call = mocks["neo4j_client"].update_graph_from_urlscan_discovery.call_args
+        if disc_call[1].get("recon_data"):
+            recon_data = disc_call[1]["recon_data"]
+        else:
+            recon_data = disc_call[0][0]
+        self.assertEqual(recon_data["domain"], "example.com")
+        self.assertIn("urlscan", recon_data)
+        self.assertEqual(recon_data["urlscan"]["results_count"], 3)
+
+    def test_urlscan_graph_update_error_raises(self):
+        """URLScan re-raises graph update errors."""
+        config = {"domain": "example.com"}
+
+        mock_settings = MagicMock()
+        mock_settings.return_value = {"URLSCAN_ENABLED": False, "URLSCAN_API_KEY": "",
+                                      "URLSCAN_MAX_RESULTS": 5000, "URLSCAN_KEY_ROTATOR": None}
+        mock_run_discovery = MagicMock(return_value={
+            "results_count": 1, "subdomains_discovered": [], "ips_discovered": [],
+            "urls_with_paths": [], "entries": [], "external_domains": [],
+        })
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = True
+        mock_client.update_graph_from_urlscan_discovery.side_effect = Exception("Neo4j write failed")
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': MagicMock(get_settings=mock_settings),
+            'recon.urlscan_enrich': MagicMock(run_urlscan_discovery_only=mock_run_discovery),
+            'graph_db': MagicMock(Neo4jClient=mock_neo4j_cls),
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            with self.assertRaises(Exception):
+                pr.run_urlscan(config)
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+
+class TestRunUncover(unittest.TestCase):
+    """Tests for run_uncover using module-level mocks."""
+
+    def _run_with_mocks(self, config, neo4j_connected=True, uncover_data=None):
+        """Helper that sets up all mocks and runs run_uncover."""
+        mock_settings = MagicMock()
+        mock_settings.return_value = {
+            "UNCOVER_ENABLED": False,
+            "OSINT_ENRICHMENT_ENABLED": False,
+            "UNCOVER_MAX_RESULTS": 500,
+            "UNCOVER_DOCKER_IMAGE": "projectdiscovery/uncover:latest",
+            "SHODAN_API_KEY": "test-shodan-key",
+        }
+
+        _uncover_data = uncover_data if uncover_data is not None else {
+            "hosts": ["sub1.example.com", "sub2.example.com"],
+            "ips": ["1.2.3.4", "5.6.7.8"],
+            "ip_ports": {"1.2.3.4": [80, 443]},
+            "urls": ["https://sub1.example.com/app"],
+            "sources": ["shodan", "censys"],
+            "source_counts": {"shodan": 3, "censys": 2},
+            "total_raw": 7,
+            "total_deduped": 5,
+        }
+
+        mock_run_expansion = MagicMock(return_value=_uncover_data)
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = neo4j_connected
+        mock_client.update_graph_from_uncover.return_value = {
+            "subdomains_created": 2, "ips_created": 2,
+            "urls_created": 1, "relationships_created": 4, "errors": [],
+        }
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+
+        mock_uncover_module = MagicMock()
+        mock_uncover_module.run_uncover_expansion = mock_run_expansion
+
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'recon.uncover_enrich': mock_uncover_module,
+            'graph_db': mock_graph_db,
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            pr.run_uncover(config)
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        return {
+            "settings": mock_settings,
+            "run_expansion": mock_run_expansion,
+            "neo4j_client": mock_client,
+        }
+
+    def test_basic_uncover_run(self):
+        """Uncover expansion runs and updates graph."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        mocks["run_expansion"].assert_called_once()
+        mocks["neo4j_client"].update_graph_from_uncover.assert_called_once()
+
+    def test_uncover_forces_enabled(self):
+        """Uncover and OSINT enrichment are force-enabled for partial recon."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        call_args = mocks["run_expansion"].call_args
+        combined_result = call_args[0][0]
+        settings = call_args[0][1]
+        self.assertTrue(settings.get("UNCOVER_ENABLED"))
+        self.assertTrue(settings.get("OSINT_ENRICHMENT_ENABLED"))
+        self.assertEqual(combined_result["domain"], "example.com")
+
+    def test_uncover_no_results_skips_graph(self):
+        """Uncover skips graph update when empty dict returned."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config, uncover_data={})
+        mocks["run_expansion"].assert_called_once()
+        mocks["neo4j_client"].update_graph_from_uncover.assert_not_called()
+
+    def test_uncover_neo4j_unreachable(self):
+        """Uncover logs warning when Neo4j is unreachable for graph update."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config, neo4j_connected=False)
+        mocks["neo4j_client"].update_graph_from_uncover.assert_not_called()
+
+    def test_uncover_graph_data_structure(self):
+        """Uncover passes correct combined_result to graph update."""
+        config = {"domain": "example.com"}
+        mocks = self._run_with_mocks(config)
+        call_args = mocks["neo4j_client"].update_graph_from_uncover.call_args
+        recon_data = call_args[1].get("recon_data") or call_args[0][0]
+        self.assertEqual(recon_data["domain"], "example.com")
+        self.assertIn("uncover", recon_data)
+        self.assertEqual(len(recon_data["uncover"]["hosts"]), 2)
+        self.assertEqual(len(recon_data["uncover"]["ips"]), 2)
+
+    def test_uncover_graph_update_error_raises(self):
+        """Uncover re-raises graph update errors."""
+        mock_settings = MagicMock()
+        mock_settings.return_value = {
+            "UNCOVER_ENABLED": False,
+            "OSINT_ENRICHMENT_ENABLED": False,
+            "UNCOVER_MAX_RESULTS": 500,
+            "SHODAN_API_KEY": "",
+        }
+
+        mock_run_expansion = MagicMock(return_value={
+            "hosts": ["sub1.example.com"], "ips": ["1.2.3.4"],
+            "ip_ports": {}, "urls": [], "sources": ["shodan"],
+            "source_counts": {"shodan": 1}, "total_raw": 1, "total_deduped": 1,
+        })
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = True
+        mock_client.update_graph_from_uncover.side_effect = Exception("Neo4j write failed")
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+        mock_uncover_module = MagicMock()
+        mock_uncover_module.run_uncover_expansion = mock_run_expansion
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'recon.uncover_enrich': mock_uncover_module,
+            'graph_db': mock_graph_db,
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            with self.assertRaises(Exception):
+                pr.run_uncover({"domain": "example.com"})
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+
+class TestUncoverMainDispatcher(unittest.TestCase):
+    """Test that main() correctly dispatches to run_uncover."""
+
+    def test_main_dispatches_uncover(self):
+        """Main function dispatches to run_uncover for tool_id=Uncover."""
+        config = {"tool_id": "Uncover", "domain": "example.com"}
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(config, f)
+            f.flush()
+            config_path = f.name
+
+        os.environ["PARTIAL_RECON_CONFIG"] = config_path
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            with patch.object(pr, 'run_uncover') as mock_run:
+                pr.main()
+                mock_run.assert_called_once_with(config)
+        finally:
+            del os.environ["PARTIAL_RECON_CONFIG"]
+            os.unlink(config_path)
+
+
+
+class TestRunNuclei(unittest.TestCase):
+    """Tests for run_nuclei using module-level mocks."""
+
+    def _run_with_mocks(self, config, neo4j_connected=True, graph_baseurls=None, graph_endpoints=None):
+        """Helper that sets up all mocks and runs run_nuclei."""
+        mock_settings = MagicMock()
+        mock_settings.return_value = {
+            'NUCLEI_ENABLED': True, 'NUCLEI_SEVERITY': ['critical', 'high', 'medium', 'low'],
+            'NUCLEI_TEMPLATES': [], 'NUCLEI_EXCLUDE_TEMPLATES': [],
+            'NUCLEI_CUSTOM_TEMPLATES': [], 'NUCLEI_SELECTED_CUSTOM_TEMPLATES': [],
+            'NUCLEI_RATE_LIMIT': 100, 'NUCLEI_BULK_SIZE': 25,
+            'NUCLEI_CONCURRENCY': 25, 'NUCLEI_TIMEOUT': 10,
+            'NUCLEI_RETRIES': 1, 'NUCLEI_TAGS': [], 'NUCLEI_EXCLUDE_TAGS': [],
+            'NUCLEI_DAST_MODE': False, 'NUCLEI_AUTO_UPDATE_TEMPLATES': True,
+            'NUCLEI_NEW_TEMPLATES_ONLY': False, 'NUCLEI_HEADLESS': False,
+            'NUCLEI_SYSTEM_RESOLVERS': True, 'NUCLEI_FOLLOW_REDIRECTS': True,
+            'NUCLEI_MAX_REDIRECTS': 10, 'NUCLEI_SCAN_ALL_IPS': False,
+            'NUCLEI_INTERACTSH': True, 'NUCLEI_DOCKER_IMAGE': 'projectdiscovery/nuclei:latest',
+            'USE_TOR_FOR_RECON': False, 'KATANA_DEPTH': 2,
+            'CVE_LOOKUP_ENABLED': False, 'SECURITY_CHECK_ENABLED': False,
+            'MITRE_ENABLED': False,
+        }
+
+        mock_vuln_scan = MagicMock(side_effect=lambda rd, **kw: {
+            **rd,
+            'vuln_scan': {
+                'by_target': {},
+                'summary': {'total_findings': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0, 'unknown': 0},
+                'vulnerabilities': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0, 'unknown': 0},
+                'all_cves': [],
+                'scan_metadata': {'total_urls_scanned': 0},
+            },
+        })
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = neo4j_connected
+        mock_client.update_graph_from_vuln_scan.return_value = {
+            'vulnerabilities_created': 0, 'endpoints_created': 0,
+            'parameters_created': 0, 'relationships_created': 0, 'errors': [],
+        }
+
+        _graph_baseurls = graph_baseurls if graph_baseurls is not None else [
+            {'url': 'https://example.com', 'status_code': 200, 'host': 'example.com', 'content_type': 'text/html'},
+        ]
+        _graph_endpoints = graph_endpoints or []
+        _graph_subdomains = ['www.example.com']
+
+        def mock_session_run(query, **kwargs):
+            result = MagicMock()
+            if 'BaseURL' in query and 'HAS_ENDPOINT' not in query and 'RETURN' in query:
+                records = []
+                for bu_data in _graph_baseurls:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=bu_data: d[key]
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+                result.single.return_value = None
+            elif 'HAS_ENDPOINT' in query:
+                records = []
+                for ep in _graph_endpoints:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=ep: d.get(key)
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+                result.single.return_value = None
+            elif 'HAS_SUBDOMAIN' in query and 'RESOLVES_TO' not in query:
+                record = MagicMock()
+                record.__getitem__ = lambda self, key: _graph_subdomains
+                result.single.return_value = record
+                result.__iter__ = lambda self: iter([])
+            elif 'RESOLVES_TO' in query and 'HAS_SUBDOMAIN' in query:
+                result.__iter__ = lambda self: iter([])
+                result.single.return_value = None
+            elif 'RESOLVES_TO' in query:
+                result.__iter__ = lambda self: iter([])
+                result.single.return_value = None
+            elif 'UserInput' in query or 'PRODUCED' in query:
+                result.__iter__ = lambda self: iter([])
+                result.single.return_value = None
+            else:
+                result.__iter__ = lambda self: iter([])
+                result.single.return_value = None
+            return result
+
+        mock_session = MagicMock()
+        mock_session.run = mock_session_run
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.driver = mock_driver
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+
+        mock_vuln_scan_module = MagicMock()
+        mock_vuln_scan_module.run_vuln_scan = mock_vuln_scan
+
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'recon.vuln_scan': mock_vuln_scan_module,
+            'graph_db': mock_graph_db,
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault('USER_ID', 'user1')
+        os.environ.setdefault('PROJECT_ID', 'proj1')
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            pr.run_nuclei(config)
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        return {
+            'settings': mock_settings,
+            'vuln_scan': mock_vuln_scan,
+            'neo4j_client': mock_client,
+            'neo4j_cls': mock_neo4j_cls,
+        }
+
+    def test_basic_scan_graph_only(self):
+        """Graph-only scan loads BaseURLs and runs vuln scan."""
+        mocks = self._run_with_mocks({'domain': 'example.com', 'user_inputs': []})
+        mocks['vuln_scan'].assert_called_once()
+        mocks['neo4j_client'].update_graph_from_vuln_scan.assert_called_once()
+
+    def test_vuln_scan_receives_recon_data_with_http_probe(self):
+        """run_vuln_scan receives recon_data with http_probe.by_url from graph BaseURLs."""
+        mocks = self._run_with_mocks({'domain': 'example.com', 'user_inputs': []})
+        call_args = mocks['vuln_scan'].call_args
+        recon_data = call_args[0][0]
+        self.assertIn('http_probe', recon_data)
+        self.assertIn('https://example.com', recon_data['http_probe']['by_url'])
+
+    def test_vuln_scan_receives_settings(self):
+        """run_vuln_scan is called with settings kwarg."""
+        mocks = self._run_with_mocks({'domain': 'example.com', 'user_inputs': []})
+        call_args = mocks['vuln_scan'].call_args
+        self.assertIn('settings', call_args[1])
+        self.assertTrue(call_args[1]['settings']['NUCLEI_ENABLED'])
+
+    def test_nuclei_force_enabled(self):
+        """Settings should have NUCLEI_ENABLED=True."""
+        mocks = self._run_with_mocks({'domain': 'example.com', 'user_inputs': []})
+        call_args = mocks['vuln_scan'].call_args
+        self.assertTrue(call_args[1]['settings']['NUCLEI_ENABLED'])
+
+    def test_user_urls_injected(self):
+        """User-provided URLs are added to http_probe targets."""
+        mocks = self._run_with_mocks({
+            'domain': 'example.com', 'user_inputs': [],
+            'user_targets': {'urls': ['https://custom.example.com:8443'], 'url_attach_to': None},
+        })
+        call_args = mocks['vuln_scan'].call_args
+        recon_data = call_args[0][0]
+        self.assertIn('https://custom.example.com:8443', recon_data['http_probe']['by_url'])
+        self.assertIn('https://example.com', recon_data['http_probe']['by_url'])
+
+    def test_user_urls_only_no_graph(self):
+        """With graph targets disabled, only user URLs are in recon_data."""
+        mocks = self._run_with_mocks({
+            'domain': 'example.com', 'user_inputs': [],
+            'user_targets': {'urls': ['https://custom.example.com'], 'url_attach_to': None},
+            'include_graph_targets': False,
+        })
+        call_args = mocks['vuln_scan'].call_args
+        recon_data = call_args[0][0]
+        self.assertIn('https://custom.example.com', recon_data['http_probe']['by_url'])
+        self.assertEqual(len(recon_data['http_probe']['by_url']), 1)
+
+    def test_invalid_urls_skipped(self):
+        """Invalid URLs are skipped, only valid ones reach vuln_scan."""
+        mocks = self._run_with_mocks({
+            'domain': 'example.com', 'user_inputs': [],
+            'user_targets': {'urls': ['not-a-url', 'ftp://bad.com', 'https://good.example.com'], 'url_attach_to': None},
+        })
+        call_args = mocks['vuln_scan'].call_args
+        recon_data = call_args[0][0]
+        self.assertIn('https://good.example.com', recon_data['http_probe']['by_url'])
+        self.assertNotIn('not-a-url', recon_data['http_probe']['by_url'])
+        self.assertNotIn('ftp://bad.com', recon_data['http_probe']['by_url'])
+
+    def test_no_targets_exits(self):
+        """Exits with code 1 when no targets available."""
+        with self.assertRaises(SystemExit) as cm:
+            self._run_with_mocks(
+                {'domain': 'example.com', 'user_inputs': [], 'include_graph_targets': False},
+                graph_baseurls=[],
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_no_targets_when_neo4j_down(self):
+        """When Neo4j is unreachable during graph build, exits with no targets."""
+        with self.assertRaises(SystemExit) as cm:
+            self._run_with_mocks(
+                {'domain': 'example.com', 'user_inputs': []},
+                neo4j_connected=False,
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_dast_urls_with_params_added(self):
+        """User-provided URLs with query params are added to resource_enum.discovered_urls."""
+        mocks = self._run_with_mocks({
+            'domain': 'example.com', 'user_inputs': [],
+            'user_targets': {'urls': ['https://example.com/search?q=test&page=1'], 'url_attach_to': None},
+        })
+        call_args = mocks['vuln_scan'].call_args
+        recon_data = call_args[0][0]
+        self.assertIn('https://example.com/search?q=test&page=1', recon_data['resource_enum']['discovered_urls'])
+
+    def test_recon_data_has_dns_structure(self):
+        """recon_data passed to run_vuln_scan includes dns structure."""
+        mocks = self._run_with_mocks({'domain': 'example.com', 'user_inputs': []})
+        call_args = mocks['vuln_scan'].call_args
+        recon_data = call_args[0][0]
+        self.assertIn('dns', recon_data)
+        self.assertIn('domain', recon_data['dns'])
+        self.assertIn('subdomains', recon_data['dns'])
+
+    def test_recon_data_has_subdomains_for_scope(self):
+        """recon_data includes subdomains list for graph scope filtering."""
+        mocks = self._run_with_mocks({'domain': 'example.com', 'user_inputs': []})
+        call_args = mocks['vuln_scan'].call_args
+        recon_data = call_args[0][0]
+        self.assertIn('subdomains', recon_data)
+        self.assertIsInstance(recon_data['subdomains'], list)
+
+
 if __name__ == "__main__":
     unittest.main()

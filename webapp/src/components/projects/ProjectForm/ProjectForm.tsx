@@ -579,9 +579,9 @@ export function ProjectForm({
         {activeTab === 'discovery' && viewMode === 'tabs' && (
           <>
             <SubdomainDiscoverySection data={formData} updateField={updateField} onRun={mode === 'edit' && projectId ? () => setPartialReconToolId('SubdomainDiscovery') : undefined} />
-            <ShodanSection data={formData} updateField={updateField} />
-            <UrlscanSection data={formData} updateField={updateField} />
-            <OsintEnrichmentSection data={formData} updateField={updateField} />
+            <ShodanSection data={formData} updateField={updateField} onRun={mode === 'edit' && projectId ? () => setPartialReconToolId('Shodan') : undefined} />
+            <UrlscanSection data={formData} updateField={updateField} onRun={mode === 'edit' && projectId ? () => setPartialReconToolId('Urlscan') : undefined} />
+            <OsintEnrichmentSection data={formData} updateField={updateField} onRun={mode === 'edit' && projectId ? () => setPartialReconToolId('OsintEnrichment') : undefined} onRunUncover={mode === 'edit' && projectId ? () => setPartialReconToolId('Uncover') : undefined} />
           </>
         )}
 
@@ -617,11 +617,11 @@ export function ProjectForm({
         )}
 
         {activeTab === 'jsrecon' && viewMode === 'tabs' && (
-          <JsReconSection data={formData} updateField={updateField} projectId={projectId} mode={mode} />
+          <JsReconSection data={formData} updateField={updateField} projectId={projectId} mode={mode} onRun={mode === 'edit' && projectId ? () => setPartialReconToolId('JsRecon') : undefined} />
         )}
 
         {activeTab === 'vuln' && viewMode === 'tabs' && (
-          <NucleiSection data={formData} updateField={updateField} />
+          <NucleiSection data={formData} updateField={updateField} onRun={mode === 'edit' && projectId ? () => setPartialReconToolId('Nuclei') : undefined} />
         )}
 
         {activeTab === 'cve' && viewMode === 'tabs' && (
@@ -632,7 +632,7 @@ export function ProjectForm({
         )}
 
         {activeTab === 'security' && viewMode === 'tabs' && (
-          <SecurityChecksSection data={formData} updateField={updateField} />
+          <SecurityChecksSection data={formData} updateField={updateField} onRun={mode === 'edit' && projectId ? () => setPartialReconToolId('SecurityChecks') : undefined} />
         )}
 
         {activeTab === 'integrations' && (

@@ -17,6 +17,10 @@ Currently supported tool_ids:
   - Katana: runs run_katana_crawler() from helpers/resource_enum
   - Hakrawler: runs run_hakrawler_crawler() from helpers
   - Ffuf: runs run_ffuf_discovery() from helpers/resource_enum
+  - JsRecon: runs run_js_recon() from js_recon.py
+  - Shodan: runs run_shodan_enrichment() from shodan_enrich.py
+  - Urlscan: runs run_urlscan_discovery_only() from urlscan_enrich.py
+  - OsintEnrichment: runs OSINT sub-tools (Censys, FOFA, OTX, etc.) in parallel
 """
 
 import os
@@ -4000,6 +4004,1115 @@ def run_arjun(config: dict) -> None:
     print(f"\n[+][Partial Recon] Arjun parameter discovery completed successfully")
 
 
+def run_jsrecon(config: dict) -> None:
+    """
+    Run partial JS Recon analysis. Downloads and analyzes JavaScript files
+    from graph-discovered URLs and/or user-provided URLs to find secrets,
+    endpoints, source maps, dependencies, DOM sinks, and frameworks.
+
+    Input nodes: BaseURL, Endpoint (from graph)
+    Output nodes: Secret, Endpoint (merged into graph)
+
+    Same URL-input pattern as run_jsluice() -- reads BaseURLs + Endpoints
+    from graph and/or user-provided URLs, runs JS Recon analysis, merges
+    results into the graph via update_graph_from_js_recon.
+    """
+    from recon.js_recon import run_js_recon
+    from recon.project_settings import get_settings
+
+    domain = config["domain"]
+
+    user_id = os.environ.get("USER_ID", "")
+    project_id = os.environ.get("PROJECT_ID", "")
+
+    print(f"[*][Partial Recon] Loading project settings...")
+    settings = get_settings()
+
+    # Force-enable JS Recon since the user explicitly chose to run it
+    settings['JS_RECON_ENABLED'] = True
+
+    print(f"\n{'=' * 50}")
+    print(f"[*][Partial Recon] JS Recon Scanner")
+    print(f"[*][Partial Recon] Domain: {domain}")
+    print(f"{'=' * 50}\n")
+
+    # Parse user targets -- JS Recon accepts URLs (same as Jsluice/Katana)
+    user_targets = config.get("user_targets") or {}
+    user_urls = []
+    url_attach_to = None
+    user_input_id = None
+
+    if user_targets:
+        for entry in user_targets.get("urls", []):
+            entry = entry.strip()
+            if entry and _is_valid_url(entry):
+                user_urls.append(entry)
+            elif entry:
+                print(f"[!][Partial Recon] Skipping invalid URL: {entry}")
+
+        url_attach_to = user_targets.get("url_attach_to")  # BaseURL or None
+
+    if user_urls:
+        print(f"[+][Partial Recon] Validated {len(user_urls)} custom URLs")
+        if url_attach_to:
+            print(f"[+][Partial Recon] URLs will be attached to BaseURL: {url_attach_to}")
+        else:
+            print(f"[+][Partial Recon] URLs will be tracked via UserInput (generic)")
+
+    # Track whether we need a UserInput node
+    needs_user_input = bool(user_urls and not url_attach_to)
+
+    # Build target URLs from Neo4j graph (or start empty if user unchecked graph targets)
+    include_graph = config.get("include_graph_targets", True)
+    target_urls = []
+
+    if include_graph:
+        print(f"[*][Partial Recon] Querying graph for targets (BaseURLs + Endpoints)...")
+        from graph_db import Neo4jClient
+        with Neo4jClient() as graph_client:
+            if graph_client.verify_connection():
+                driver = graph_client.driver
+                with driver.session() as session:
+                    # Get all endpoint full URLs (baseurl + path) from the graph
+                    result = session.run(
+                        """
+                        MATCH (e:Endpoint {user_id: $uid, project_id: $pid})
+                        RETURN DISTINCT e.baseurl + e.path AS url
+                        """,
+                        uid=user_id, pid=project_id,
+                    )
+                    for record in result:
+                        url = record["url"]
+                        if url:
+                            target_urls.append(url)
+
+                    # Also add BaseURLs themselves
+                    result = session.run(
+                        """
+                        MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+                        RETURN DISTINCT b.url AS url
+                        """,
+                        uid=user_id, pid=project_id,
+                    )
+                    for record in result:
+                        url = record["url"]
+                        if url and url not in target_urls:
+                            target_urls.append(url)
+
+                print(f"[+][Partial Recon] Found {len(target_urls)} URLs from graph")
+            else:
+                print("[!][Partial Recon] Neo4j not reachable, cannot fetch graph inputs")
+    else:
+        print(f"[*][Partial Recon] Skipping graph targets (user opted out)")
+
+    # Add user-provided URLs to target list
+    if user_urls:
+        print(f"[*][Partial Recon] Adding {len(user_urls)} user-provided URLs")
+        for url in user_urls:
+            if url not in target_urls:
+                target_urls.append(url)
+
+    if not target_urls:
+        print("[!][Partial Recon] No URLs to analyze (graph has no BaseURLs/Endpoints and no valid user URLs provided).")
+        print("[!][Partial Recon] Run HTTP Probing (Httpx) and Resource Enumeration (Katana/Hakrawler) first, or provide URLs manually.")
+        sys.exit(1)
+
+    print(f"[+][Partial Recon] Total {len(target_urls)} URLs for JS Recon analysis")
+
+    # Build a combined_result structure that run_js_recon expects
+    # It reads from resource_enum.discovered_urls and http_probe.by_url
+    # We populate discovered_urls with all our target URLs
+    # and http_probe.by_url as an empty dict (no live probe data in partial mode)
+    subdomains = []
+    if include_graph:
+        try:
+            from graph_db import Neo4jClient
+            with Neo4jClient() as graph_client:
+                if graph_client.verify_connection():
+                    driver = graph_client.driver
+                    with driver.session() as session:
+                        result = session.run(
+                            """
+                            MATCH (d:Domain {name: $domain, user_id: $uid, project_id: $pid})
+                                  -[:HAS_SUBDOMAIN]->(s:Subdomain)
+                            RETURN collect(DISTINCT s.name) AS subdomains
+                            """,
+                            domain=domain, uid=user_id, pid=project_id,
+                        )
+                        record = result.single()
+                        if record:
+                            subdomains = record["subdomains"] or []
+        except Exception:
+            pass
+
+    combined_result = {
+        "domain": domain,
+        "dns": {
+            "subdomains": [{"subdomain": s, "source": "graph"} for s in subdomains],
+        },
+        "resource_enum": {
+            "discovered_urls": target_urls,
+        },
+        "http_probe": {
+            "by_url": {},
+        },
+        "metadata": {
+            "project_id": project_id,
+        },
+    }
+
+    # Run JS Recon analysis (same function as the full pipeline)
+    print(f"[*][Partial Recon] Running JS Recon analysis...")
+    combined_result = run_js_recon(combined_result, settings=settings)
+
+    js_recon_data = combined_result.get("js_recon", {})
+    secrets_count = len(js_recon_data.get("secrets", []))
+    endpoints_count = len(js_recon_data.get("endpoints", []))
+    print(f"[+][Partial Recon] JS Recon found {secrets_count} secrets, {endpoints_count} endpoints")
+
+    if not js_recon_data or (not secrets_count and not endpoints_count):
+        print("[*][Partial Recon] No JS Recon findings to update in graph")
+        if not js_recon_data.get("scan_metadata", {}).get("js_files_analyzed", 0):
+            print("[*][Partial Recon] No JS files were found/analyzed. Ensure target URLs contain .js files.")
+        return
+
+    # Update the graph database
+    print(f"[*][Partial Recon] Updating graph database...")
+    try:
+        from graph_db import Neo4jClient
+        with Neo4jClient() as graph_client:
+            if graph_client.verify_connection():
+                stats = graph_client.update_graph_from_js_recon(
+                    recon_data=combined_result,
+                    user_id=user_id,
+                    project_id=project_id,
+                )
+
+                # Link user-provided URLs to graph
+                if user_urls:
+                    from urllib.parse import urlparse as _urlparse
+                    driver = graph_client.driver
+                    with driver.session() as session:
+                        if url_attach_to:
+                            for url in user_urls:
+                                parsed = _urlparse(url)
+                                base_url = f"{parsed.scheme}://{parsed.netloc}"
+                                session.run(
+                                    """
+                                    MATCH (parent:BaseURL {url: $parent_url, user_id: $uid, project_id: $pid})
+                                    MERGE (b:BaseURL {url: $url, user_id: $uid, project_id: $pid})
+                                    ON CREATE SET b.source = 'partial_recon_user_input',
+                                                  b.host = $host,
+                                                  b.updated_at = datetime()
+                                    MERGE (b)-[:DISCOVERED_FROM]->(parent)
+                                    """,
+                                    parent_url=url_attach_to, url=base_url,
+                                    uid=user_id, pid=project_id,
+                                    host=parsed.netloc.split(":")[0],
+                                )
+                            print(f"[+][Partial Recon] Linked user URLs to {url_attach_to} via DISCOVERED_FROM")
+                        elif needs_user_input:
+                            user_input_id = str(uuid.uuid4())
+                            graph_client.create_user_input_node(
+                                domain=domain,
+                                user_input_data={
+                                    "id": user_input_id,
+                                    "input_type": "urls",
+                                    "values": user_urls,
+                                    "tool_id": "JsRecon",
+                                },
+                                user_id=user_id,
+                                project_id=project_id,
+                            )
+                            for url in user_urls:
+                                parsed = _urlparse(url)
+                                base_url = f"{parsed.scheme}://{parsed.netloc}"
+                                session.run(
+                                    """
+                                    MERGE (b:BaseURL {url: $url, user_id: $uid, project_id: $pid})
+                                    ON CREATE SET b.source = 'partial_recon_user_input',
+                                                  b.host = $host,
+                                                  b.updated_at = datetime()
+                                    WITH b
+                                    MATCH (ui:UserInput {id: $ui_id})
+                                    MERGE (ui)-[:PRODUCED]->(b)
+                                    """,
+                                    ui_id=user_input_id, url=base_url,
+                                    uid=user_id, pid=project_id,
+                                    host=parsed.netloc.split(":")[0],
+                                )
+                            graph_client.update_user_input_status(
+                                user_input_id, "completed", stats
+                            )
+                            print(f"[+][Partial Recon] Created UserInput + linked user URLs via PRODUCED")
+
+                print(f"[+][Partial Recon] Graph updated successfully")
+                print(f"[+][Partial Recon] Stats: {json.dumps(stats, default=str)}")
+            else:
+                print("[!][Partial Recon] Neo4j not reachable, graph not updated")
+    except Exception as e:
+        print(f"[!][Partial Recon] Graph update failed: {e}")
+        raise
+
+    print(f"\n[+][Partial Recon] JS Recon analysis completed successfully")
+
+
+def _build_vuln_scan_data_from_graph(domain: str, user_id: str, project_id: str) -> dict:
+    """
+    Query Neo4j to build the recon_data dict that run_vuln_scan expects.
+
+    Returns a dict with 'domain', 'dns', 'subdomains', 'http_probe', and
+    'resource_enum' keys. The vuln_scan module uses extract_targets_from_recon()
+    (needs dns) and build_target_urls() (prefers resource_enum > http_probe).
+    """
+    from graph_db import Neo4jClient
+
+    recon_data = {
+        "domain": domain,
+        "subdomains": [],
+        "dns": {
+            "domain": {"ips": {"ipv4": [], "ipv6": []}, "has_records": False},
+            "subdomains": {},
+        },
+        "http_probe": {
+            "by_url": {},
+        },
+        "resource_enum": {
+            "by_base_url": {},
+            "discovered_urls": [],
+        },
+    }
+
+    with Neo4jClient() as graph_client:
+        if not graph_client.verify_connection():
+            print("[!][Partial Recon] Neo4j not reachable, cannot fetch graph inputs")
+            return recon_data
+
+        driver = graph_client.driver
+        with driver.session() as session:
+            # 1) Domain -> IP relationships (for extract_targets_from_recon)
+            result = session.run(
+                """
+                MATCH (d:Domain {name: $domain, user_id: $uid, project_id: $pid})
+                      -[:RESOLVES_TO]->(i:IP)
+                RETURN i.address AS address, i.version AS version
+                """,
+                domain=domain, uid=user_id, pid=project_id,
+            )
+            for record in result:
+                addr = record["address"]
+                bucket = _classify_ip(addr, record["version"])
+                recon_data["dns"]["domain"]["ips"][bucket].append(addr)
+
+            if (recon_data["dns"]["domain"]["ips"]["ipv4"]
+                    or recon_data["dns"]["domain"]["ips"]["ipv6"]):
+                recon_data["dns"]["domain"]["has_records"] = True
+
+            # 2) Subdomain -> IP relationships
+            result = session.run(
+                """
+                MATCH (d:Domain {name: $domain, user_id: $uid, project_id: $pid})
+                      -[:HAS_SUBDOMAIN]->(s:Subdomain)
+                      -[:RESOLVES_TO]->(i:IP)
+                RETURN s.name AS subdomain, i.address AS address, i.version AS version
+                """,
+                domain=domain, uid=user_id, pid=project_id,
+            )
+            subdomain_set = set()
+            for record in result:
+                sub = record["subdomain"]
+                addr = record["address"]
+                bucket = _classify_ip(addr, record["version"])
+                subdomain_set.add(sub)
+
+                if sub not in recon_data["dns"]["subdomains"]:
+                    recon_data["dns"]["subdomains"][sub] = {
+                        "ips": {"ipv4": [], "ipv6": []},
+                        "has_records": True,
+                    }
+                recon_data["dns"]["subdomains"][sub]["ips"][bucket].append(addr)
+
+            # Also get subdomains without IPs for the subdomains list
+            result = session.run(
+                """
+                MATCH (d:Domain {name: $domain, user_id: $uid, project_id: $pid})
+                      -[:HAS_SUBDOMAIN]->(s:Subdomain)
+                RETURN collect(DISTINCT s.name) AS subdomains
+                """,
+                domain=domain, uid=user_id, pid=project_id,
+            )
+            record = result.single()
+            if record:
+                recon_data["subdomains"] = record["subdomains"] or []
+
+            # 3) BaseURL nodes (for build_target_urls http_probe fallback)
+            result = session.run(
+                """
+                MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+                RETURN b.url AS url, b.status_code AS status_code,
+                       b.host AS host, b.content_type AS content_type
+                """,
+                uid=user_id, pid=project_id,
+            )
+            for record in result:
+                url = record["url"]
+                status_code = record["status_code"]
+                if status_code is not None and int(status_code) >= 500:
+                    continue
+                recon_data["http_probe"]["by_url"][url] = {
+                    "url": url,
+                    "host": record["host"] or "",
+                    "status_code": int(status_code) if status_code is not None else 200,
+                    "content_type": record["content_type"] or "",
+                }
+
+            # 4) Endpoints with parameters (for DAST mode)
+            result = session.run(
+                """
+                MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+                      -[:HAS_ENDPOINT]->(e:Endpoint)
+                WHERE e.full_url IS NOT NULL
+                RETURN e.full_url AS url
+                """,
+                uid=user_id, pid=project_id,
+            )
+            discovered_urls = []
+            for record in result:
+                url = record["url"]
+                if url:
+                    discovered_urls.append(url)
+            recon_data["resource_enum"]["discovered_urls"] = discovered_urls
+
+    return recon_data
+
+
+def run_nuclei(config: dict) -> None:
+    """
+    Run partial vulnerability scanning using Nuclei.
+
+    Scans BaseURLs and endpoints from the graph (and/or user-provided URLs)
+    with the Nuclei vulnerability scanner. Results are merged into the graph
+    via update_graph_from_vuln_scan.
+    """
+    from recon.vuln_scan import run_vuln_scan
+    from recon.project_settings import get_settings
+
+    domain = config["domain"]
+
+    user_id = os.environ.get("USER_ID", "")
+    project_id = os.environ.get("PROJECT_ID", "")
+
+    print(f"[*][Partial Recon] Loading project settings...")
+    settings = get_settings()
+
+    # Force-enable Nuclei since the user explicitly chose to run it
+    settings['NUCLEI_ENABLED'] = True
+
+    print(f"\n{'=' * 50}")
+    print(f"[*][Partial Recon] Nuclei Vulnerability Scanning")
+    print(f"[*][Partial Recon] Domain: {domain}")
+    print(f"{'=' * 50}\n")
+
+    # Parse user targets -- Nuclei accepts URLs
+    user_targets = config.get("user_targets") or {}
+    user_urls = []
+    url_attach_to = None
+
+    if user_targets:
+        for entry in user_targets.get("urls", []):
+            entry = entry.strip()
+            if entry and _is_valid_url(entry):
+                user_urls.append(entry)
+            elif entry:
+                print(f"[!][Partial Recon] Skipping invalid URL: {entry}")
+
+        url_attach_to = user_targets.get("url_attach_to")  # BaseURL or None
+
+    if user_urls:
+        print(f"[+][Partial Recon] Validated {len(user_urls)} custom URLs")
+        if url_attach_to:
+            print(f"[+][Partial Recon] URLs will be attached to BaseURL: {url_attach_to}")
+        else:
+            print(f"[+][Partial Recon] URLs will be tracked via UserInput (generic)")
+
+    # Track whether we need a UserInput node
+    needs_user_input = bool(user_urls and not url_attach_to)
+
+    # Build recon_data from Neo4j graph (or start empty if user unchecked graph targets)
+    include_graph = config.get("include_graph_targets", True)
+    if include_graph:
+        print(f"[*][Partial Recon] Querying graph for targets (BaseURLs, Endpoints, DNS)...")
+        recon_data = _build_vuln_scan_data_from_graph(domain, user_id, project_id)
+    else:
+        print(f"[*][Partial Recon] Skipping graph targets (user opted out)")
+        recon_data = {
+            "domain": domain,
+            "subdomains": [],
+            "dns": {
+                "domain": {"ips": {"ipv4": [], "ipv6": []}, "has_records": False},
+                "subdomains": {},
+            },
+            "http_probe": {
+                "by_url": {},
+            },
+            "resource_enum": {
+                "by_base_url": {},
+                "discovered_urls": [],
+            },
+        }
+
+    # Inject user-provided URLs into http_probe targets
+    if user_urls:
+        print(f"[*][Partial Recon] Adding {len(user_urls)} user-provided URLs to scan targets")
+        for url in user_urls:
+            if url not in recon_data["http_probe"]["by_url"]:
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                recon_data["http_probe"]["by_url"][url] = {
+                    "url": url,
+                    "host": parsed.netloc.split(":")[0],
+                    "status_code": 200,
+                    "content_type": "text/html",
+                }
+            # Also add user URLs with parameters to DAST list
+            if "?" in url and "=" in url:
+                if url not in recon_data["resource_enum"]["discovered_urls"]:
+                    recon_data["resource_enum"]["discovered_urls"].append(url)
+
+    # Ensure all target hostnames are in subdomains list for scope filtering
+    existing_subs = set(recon_data.get("subdomains", []))
+    for url_key, url_data in recon_data["http_probe"]["by_url"].items():
+        host = url_data.get("host", "")
+        if host and host not in existing_subs:
+            existing_subs.add(host)
+    recon_data["subdomains"] = list(existing_subs)
+
+    # Check we have something to scan
+    has_http_targets = bool(recon_data["http_probe"]["by_url"])
+    has_dns_targets = bool(recon_data["dns"]["domain"]["has_records"] or recon_data["dns"]["subdomains"])
+    if not has_http_targets and not has_dns_targets:
+        print("[!][Partial Recon] No targets to scan (no BaseURLs, endpoints, or DNS data in graph).")
+        print("[!][Partial Recon] Run HTTP Probing (Httpx) or Subdomain Discovery first, or provide URLs manually.")
+        sys.exit(1)
+
+    # Run vuln_scan (same function as the full pipeline)
+    print(f"[*][Partial Recon] Running Nuclei vulnerability scan...")
+    result = run_vuln_scan(recon_data, settings=settings)
+
+    # Also run MITRE enrichment if enabled
+    if settings.get('MITRE_ENABLED', True):
+        try:
+            from recon.add_mitre import run_mitre_enrichment
+            print(f"[*][Partial Recon] Running MITRE ATT&CK enrichment...")
+            result = run_mitre_enrichment(result, settings=settings)
+        except Exception as e:
+            print(f"[!][Partial Recon] MITRE enrichment failed: {e}")
+
+    # Update the graph database
+    print(f"[*][Partial Recon] Updating graph database...")
+    try:
+        from graph_db import Neo4jClient
+        with Neo4jClient() as graph_client:
+            if graph_client.verify_connection():
+                stats = graph_client.update_graph_from_vuln_scan(
+                    recon_data=result,
+                    user_id=user_id,
+                    project_id=project_id,
+                )
+
+                # Link user-provided URLs to graph
+                if user_urls:
+                    from urllib.parse import urlparse as _urlparse
+                    driver = graph_client.driver
+                    with driver.session() as session:
+                        if url_attach_to:
+                            # Verify the BaseURL still exists
+                            check = session.run(
+                                """
+                                MATCH (b:BaseURL {url: $url, user_id: $uid, project_id: $pid})
+                                RETURN b.url AS url
+                                """,
+                                url=url_attach_to, uid=user_id, pid=project_id,
+                            )
+                            if check.single():
+                                print(f"[+][Partial Recon] BaseURL {url_attach_to} exists, linking user URLs")
+                            else:
+                                print(f"[!][Partial Recon] BaseURL {url_attach_to} not found, falling back to UserInput")
+                                needs_user_input = True
+                                url_attach_to = None
+
+                        if needs_user_input:
+                            # Create UserInput node for orphan URLs
+                            import uuid
+                            user_input_id = str(uuid.uuid4())
+                            session.run(
+                                """
+                                MATCH (d:Domain {name: $domain, user_id: $uid, project_id: $pid})
+                                MERGE (ui:UserInput {id: $ui_id, user_id: $uid, project_id: $pid})
+                                ON CREATE SET ui.type = 'url',
+                                              ui.values = $urls,
+                                              ui.created_at = datetime(),
+                                              ui.tool = 'Nuclei'
+                                MERGE (d)-[:HAS_USER_INPUT]->(ui)
+                                """,
+                                domain=domain, uid=user_id, pid=project_id,
+                                ui_id=user_input_id, urls=user_urls,
+                            )
+                            # Link UserInput to any BaseURLs created from user URLs
+                            for url in user_urls:
+                                session.run(
+                                    """
+                                    MATCH (ui:UserInput {id: $ui_id, user_id: $uid, project_id: $pid})
+                                    MATCH (b:BaseURL {url: $url, user_id: $uid, project_id: $pid})
+                                    MERGE (ui)-[:PRODUCED]->(b)
+                                    """,
+                                    ui_id=user_input_id, uid=user_id, pid=project_id, url=url,
+                                )
+                            print(f"[+][Partial Recon] Created UserInput + linked user URLs via PRODUCED")
+
+                print(f"[+][Partial Recon] Graph updated successfully")
+                print(f"[+][Partial Recon] Stats: {json.dumps(stats, default=str)}")
+            else:
+                print("[!][Partial Recon] Neo4j not reachable, graph not updated")
+    except Exception as e:
+        print(f"[!][Partial Recon] Graph update failed: {e}")
+        raise
+
+    print(f"\n[+][Partial Recon] Nuclei vulnerability scanning completed successfully")
+
+
+def run_security_checks_partial(config: dict) -> None:
+    """
+    Run partial security checks (Direct IP Access, TLS/SSL, Security Headers, DNS, etc.)
+
+    Uses the same run_security_checks() function from the full pipeline.
+    Targets are loaded from the graph (IPs, subdomains, BaseURLs).
+    No user-provided inputs -- security checks operate on existing graph data.
+    Results are stored as Vulnerability nodes via update_graph_from_vuln_scan.
+    """
+    from recon.helpers import run_security_checks
+    from recon.project_settings import get_settings
+
+    domain = config["domain"]
+
+    user_id = os.environ.get("USER_ID", "")
+    project_id = os.environ.get("PROJECT_ID", "")
+
+    print(f"[*][Partial Recon] Loading project settings...")
+    settings = get_settings()
+
+    # Force-enable security checks since the user explicitly chose to run them
+    settings['SECURITY_CHECK_ENABLED'] = True
+
+    print(f"\n{'=' * 50}")
+    print(f"[*][Partial Recon] Security Checks")
+    print(f"[*][Partial Recon] Domain: {domain}")
+    print(f"{'=' * 50}\n")
+
+    # Build recon_data from Neo4j graph
+    include_graph = config.get("include_graph_targets", True)
+    if include_graph:
+        print(f"[*][Partial Recon] Querying graph for targets (IPs, Subdomains, BaseURLs, DNS)...")
+        recon_data = _build_vuln_scan_data_from_graph(domain, user_id, project_id)
+    else:
+        print(f"[*][Partial Recon] Skipping graph targets (user opted out)")
+        recon_data = {
+            "domain": domain,
+            "subdomains": [],
+            "dns": {
+                "domain": {"ips": {"ipv4": [], "ipv6": []}, "has_records": False},
+                "subdomains": {},
+            },
+            "http_probe": {
+                "by_url": {},
+            },
+            "resource_enum": {
+                "by_base_url": {},
+                "discovered_urls": [],
+            },
+        }
+
+    # Check we have something to scan
+    has_http_targets = bool(recon_data["http_probe"]["by_url"])
+    has_dns_targets = bool(recon_data["dns"]["domain"]["has_records"] or recon_data["dns"]["subdomains"])
+    if not has_http_targets and not has_dns_targets:
+        print("[!][Partial Recon] No targets to scan (no IPs, subdomains, or BaseURLs in graph).")
+        print("[!][Partial Recon] Run Subdomain Discovery and HTTP Probing first.")
+        sys.exit(1)
+
+    # Build enabled checks dict from settings
+    security_checks_enabled = {
+        "direct_ip_http": settings.get('SECURITY_CHECK_DIRECT_IP_HTTP', True),
+        "direct_ip_https": settings.get('SECURITY_CHECK_DIRECT_IP_HTTPS', True),
+        "ip_api_exposed": settings.get('SECURITY_CHECK_IP_API_EXPOSED', True),
+        "waf_bypass": settings.get('SECURITY_CHECK_WAF_BYPASS', True),
+        "tls_expiring_soon": settings.get('SECURITY_CHECK_TLS_EXPIRING_SOON', True),
+        "missing_referrer_policy": settings.get('SECURITY_CHECK_MISSING_REFERRER_POLICY', True),
+        "missing_permissions_policy": settings.get('SECURITY_CHECK_MISSING_PERMISSIONS_POLICY', True),
+        "missing_coop": settings.get('SECURITY_CHECK_MISSING_COOP', True),
+        "missing_corp": settings.get('SECURITY_CHECK_MISSING_CORP', True),
+        "missing_coep": settings.get('SECURITY_CHECK_MISSING_COEP', True),
+        "cache_control_missing": settings.get('SECURITY_CHECK_CACHE_CONTROL_MISSING', True),
+        "login_no_https": settings.get('SECURITY_CHECK_LOGIN_NO_HTTPS', True),
+        "session_no_secure": settings.get('SECURITY_CHECK_SESSION_NO_SECURE', True),
+        "session_no_httponly": settings.get('SECURITY_CHECK_SESSION_NO_HTTPONLY', True),
+        "basic_auth_no_tls": settings.get('SECURITY_CHECK_BASIC_AUTH_NO_TLS', True),
+        "spf_missing": settings.get('SECURITY_CHECK_SPF_MISSING', True),
+        "dmarc_missing": settings.get('SECURITY_CHECK_DMARC_MISSING', True),
+        "dnssec_missing": settings.get('SECURITY_CHECK_DNSSEC_MISSING', True),
+        "zone_transfer": settings.get('SECURITY_CHECK_ZONE_TRANSFER', True),
+        "admin_port_exposed": settings.get('SECURITY_CHECK_ADMIN_PORT_EXPOSED', True),
+        "database_exposed": settings.get('SECURITY_CHECK_DATABASE_EXPOSED', True),
+        "redis_no_auth": settings.get('SECURITY_CHECK_REDIS_NO_AUTH', True),
+        "kubernetes_api_exposed": settings.get('SECURITY_CHECK_KUBERNETES_API_EXPOSED', True),
+        "smtp_open_relay": settings.get('SECURITY_CHECK_SMTP_OPEN_RELAY', True),
+        "csp_unsafe_inline": settings.get('SECURITY_CHECK_CSP_UNSAFE_INLINE', True),
+        "insecure_form_action": settings.get('SECURITY_CHECK_INSECURE_FORM_ACTION', True),
+        "no_rate_limiting": settings.get('SECURITY_CHECK_NO_RATE_LIMITING', True),
+    }
+
+    enabled_count = sum(1 for v in security_checks_enabled.values() if v)
+    print(f"[*][Partial Recon] {enabled_count}/{len(security_checks_enabled)} security checks enabled")
+
+    if not any(security_checks_enabled.values()):
+        print("[!][Partial Recon] All individual security checks are disabled in settings.")
+        print("[!][Partial Recon] Enable at least one check category to run security checks.")
+        sys.exit(1)
+
+    # Run security checks (same function as the full pipeline)
+    print(f"[*][Partial Recon] Running security checks...")
+    security_results = run_security_checks(
+        recon_data=recon_data,
+        enabled_checks=security_checks_enabled,
+        timeout=settings.get('SECURITY_CHECK_TIMEOUT', 10),
+        tls_expiry_days=settings.get('SECURITY_CHECK_TLS_EXPIRY_DAYS', 30),
+        max_workers=settings.get('SECURITY_CHECK_MAX_WORKERS', 10),
+    )
+
+    # Merge security checks into recon_data for graph update
+    if "vuln_scan" in recon_data:
+        recon_data["vuln_scan"]["security_checks"] = security_results.get("security_checks", {})
+    else:
+        recon_data["vuln_scan"] = {"security_checks": security_results.get("security_checks", {})}
+
+    findings = security_results.get("security_checks", {}).get("findings", [])
+    print(f"[+][Partial Recon] Security checks completed: {len(findings)} findings")
+
+    # Update the graph database
+    print(f"[*][Partial Recon] Updating graph database...")
+    try:
+        from graph_db import Neo4jClient
+        with Neo4jClient() as graph_client:
+            if graph_client.verify_connection():
+                stats = graph_client.update_graph_from_vuln_scan(
+                    recon_data=recon_data,
+                    user_id=user_id,
+                    project_id=project_id,
+                )
+                print(f"[+][Partial Recon] Graph updated successfully")
+                print(f"[+][Partial Recon] Stats: {json.dumps(stats, default=str)}")
+            else:
+                print("[!][Partial Recon] Neo4j not reachable, graph not updated")
+    except Exception as e:
+        print(f"[!][Partial Recon] Graph update failed: {e}")
+        raise
+
+    print(f"\n[+][Partial Recon] Security checks completed successfully")
+
+
+def run_shodan(config: dict) -> None:
+    """
+    Run partial Shodan OSINT enrichment.
+
+    Queries existing IPs from the graph and enriches them with Shodan data
+    (host lookup, reverse DNS, domain DNS, passive CVEs).
+    No user inputs -- Shodan starts from the domain and its discovered IPs.
+    """
+    from recon.shodan_enrich import run_shodan_enrichment
+    from recon.project_settings import get_settings
+
+    domain = config["domain"]
+    user_id = os.environ.get("USER_ID", "")
+    project_id = os.environ.get("PROJECT_ID", "")
+    include_graph = config.get("include_graph_targets", True)
+
+    print(f"[*][Partial Recon] Loading project settings...")
+    settings = get_settings()
+
+    print(f"\n{'=' * 50}")
+    print(f"[*][Partial Recon] Shodan OSINT Enrichment")
+    print(f"[*][Partial Recon] Domain: {domain}")
+    print(f"{'=' * 50}\n")
+
+    # Force-enable Shodan for partial recon (user explicitly triggered it)
+    settings["SHODAN_ENABLED"] = True
+
+    # Build combined_result from graph (IPs + subdomains)
+    if include_graph:
+        combined_result = _build_recon_data_from_graph(domain, user_id, project_id)
+    else:
+        combined_result = {
+            "domain": domain,
+            "dns": {
+                "domain": {"ips": {"ipv4": [], "ipv6": []}, "has_records": False},
+                "subdomains": {},
+            },
+        }
+
+    # Count IPs for logging
+    ip_count = len(combined_result.get("dns", {}).get("domain", {}).get("ips", {}).get("ipv4", []))
+    for _sub, info in combined_result.get("dns", {}).get("subdomains", {}).items():
+        ip_count += len(info.get("ips", {}).get("ipv4", []))
+    print(f"[+][Partial Recon] Found {ip_count} IPs from graph for enrichment")
+
+    if ip_count == 0:
+        print(f"[-][Partial Recon] No IPs found in graph. Run Subdomain Discovery first to populate IPs.")
+        return
+
+    # Run Shodan enrichment (same function as full pipeline)
+    combined_result = run_shodan_enrichment(combined_result, settings)
+
+    shodan_data = combined_result.get("shodan", {})
+    if not shodan_data:
+        print(f"[-][Partial Recon] Shodan returned no data")
+        return
+
+    print(f"[+][Partial Recon] Shodan hosts enriched: {len(shodan_data.get('hosts', []))}")
+    print(f"[+][Partial Recon] Reverse DNS entries: {len(shodan_data.get('reverse_dns', {}))}")
+    print(f"[+][Partial Recon] Domain DNS subdomains: {len(shodan_data.get('domain_dns', {}).get('subdomains', []))}")
+    print(f"[+][Partial Recon] Passive CVEs: {len(shodan_data.get('cves', []))}")
+
+    # Update the graph database
+    print(f"[*][Partial Recon] Updating graph database...")
+    try:
+        from graph_db import Neo4jClient
+        with Neo4jClient() as graph_client:
+            if graph_client.verify_connection():
+                stats = graph_client.update_graph_from_shodan(
+                    recon_data=combined_result,
+                    user_id=user_id,
+                    project_id=project_id,
+                )
+                print(f"[+][Partial Recon] Graph updated successfully")
+                print(f"[+][Partial Recon] Stats: {json.dumps(stats, default=str)}")
+            else:
+                print("[!][Partial Recon] Neo4j not reachable, graph not updated")
+    except Exception as e:
+        print(f"[!][Partial Recon] Graph update failed: {e}")
+        raise
+
+    print(f"\n[+][Partial Recon] Shodan enrichment completed successfully")
+
+
+def run_urlscan(config: dict) -> None:
+    """
+    Run partial URLScan.io passive enrichment.
+
+    Phase A (discovery): discovers subdomains, IPs, external domains, domain age.
+    Phase B (enrichment): enriches existing BaseURLs with screenshots/endpoints/parameters.
+    """
+    from recon.urlscan_enrich import run_urlscan_discovery_only
+    from recon.project_settings import get_settings
+
+    domain = config["domain"]
+    user_id = os.environ.get("USER_ID", "")
+    project_id = os.environ.get("PROJECT_ID", "")
+
+    print(f"[*][Partial Recon] Loading project settings...")
+    settings = get_settings()
+
+    print(f"\n{'=' * 50}")
+    print(f"[*][Partial Recon] URLScan.io Passive Enrichment")
+    print(f"[*][Partial Recon] Domain: {domain}")
+    print(f"{'=' * 50}\n")
+
+    # Force-enable URLScan for partial recon (user explicitly triggered it)
+    settings["URLSCAN_ENABLED"] = True
+
+    # Run URLScan discovery (same function as full pipeline Phase A)
+    urlscan_data = run_urlscan_discovery_only(domain, settings)
+
+    if not urlscan_data or urlscan_data.get("results_count", 0) == 0:
+        print(f"[-][Partial Recon] URLScan returned no results for {domain}")
+        return
+
+    print(f"[+][Partial Recon] URLScan returned {urlscan_data.get('results_count', 0)} results")
+    print(f"[+][Partial Recon] Subdomains: {len(urlscan_data.get('subdomains_discovered', []))}")
+    print(f"[+][Partial Recon] IPs: {len(urlscan_data.get('ips_discovered', []))}")
+    print(f"[+][Partial Recon] URLs with paths: {len(urlscan_data.get('urls_with_paths', []))}")
+    print(f"[+][Partial Recon] External domains: {len(urlscan_data.get('external_domains', []))}")
+
+    # Build combined_result structure expected by graph update methods
+    combined_result = {
+        "domain": domain,
+        "urlscan": urlscan_data,
+    }
+
+    # Update the graph database
+    print(f"[*][Partial Recon] Updating graph database...")
+    try:
+        from graph_db import Neo4jClient
+        with Neo4jClient() as graph_client:
+            if graph_client.verify_connection():
+                # Phase A: discovery (subdomains, IPs, external domains, domain age)
+                discovery_stats = graph_client.update_graph_from_urlscan_discovery(
+                    recon_data=combined_result,
+                    user_id=user_id,
+                    project_id=project_id,
+                )
+                print(f"[+][Partial Recon] Discovery graph update: {json.dumps(discovery_stats, default=str)}")
+
+                # Phase B: enrichment (BaseURL screenshots, endpoints, parameters)
+                enrichment_stats = graph_client.update_graph_from_urlscan_enrichment(
+                    recon_data=combined_result,
+                    user_id=user_id,
+                    project_id=project_id,
+                )
+                print(f"[+][Partial Recon] Enrichment graph update: {json.dumps(enrichment_stats, default=str)}")
+            else:
+                print("[!][Partial Recon] Neo4j not reachable, graph not updated")
+    except Exception as e:
+        print(f"[!][Partial Recon] Graph update failed: {e}")
+        raise
+
+    print(f"\n[+][Partial Recon] URLScan enrichment completed successfully")
+
+
+def run_uncover(config: dict) -> None:
+    """
+    Run partial Uncover multi-engine target expansion.
+
+    Queries Shodan, Censys, FOFA, ZoomEye, Netlas, CriminalIP, and other
+    search engines to discover additional IPs, subdomains, ports, and URLs
+    associated with the target domain.
+    """
+    from recon.uncover_enrich import run_uncover_expansion
+    from recon.project_settings import get_settings
+
+    domain = config["domain"]
+    user_id = os.environ.get("USER_ID", "")
+    project_id = os.environ.get("PROJECT_ID", "")
+
+    print(f"[*][Partial Recon] Loading project settings...")
+    settings = get_settings()
+
+    print(f"\n{'=' * 50}")
+    print(f"[*][Partial Recon] Uncover Multi-Engine Expansion")
+    print(f"[*][Partial Recon] Domain: {domain}")
+    print(f"{'=' * 50}\n")
+
+    # Force-enable Uncover for partial recon (user explicitly triggered it)
+    settings["UNCOVER_ENABLED"] = True
+    settings["OSINT_ENRICHMENT_ENABLED"] = True
+
+    # Build minimal combined_result structure expected by run_uncover_expansion
+    combined_result = {
+        "domain": domain,
+    }
+
+    # Run Uncover expansion (same function as full pipeline)
+    uncover_data = run_uncover_expansion(combined_result, settings)
+
+    if not uncover_data:
+        print(f"[-][Partial Recon] Uncover returned no results for {domain}")
+        return
+
+    print(f"[+][Partial Recon] Uncover returned {uncover_data.get('total_deduped', 0)} deduplicated results")
+    print(f"[+][Partial Recon] Hosts: {len(uncover_data.get('hosts', []))}")
+    print(f"[+][Partial Recon] IPs: {len(uncover_data.get('ips', []))}")
+    print(f"[+][Partial Recon] URLs: {len(uncover_data.get('urls', []))}")
+
+    # Build combined_result structure expected by graph update method
+    combined_result["uncover"] = uncover_data
+
+    # Update the graph database
+    print(f"[*][Partial Recon] Updating graph database...")
+    try:
+        from graph_db import Neo4jClient
+        with Neo4jClient() as graph_client:
+            if graph_client.verify_connection():
+                stats = graph_client.update_graph_from_uncover(
+                    recon_data=combined_result,
+                    user_id=user_id,
+                    project_id=project_id,
+                )
+                print(f"[+][Partial Recon] Graph updated successfully")
+                print(f"[+][Partial Recon] Stats: {json.dumps(stats, default=str)}")
+            else:
+                print("[!][Partial Recon] Neo4j not reachable, graph not updated")
+    except Exception as e:
+        print(f"[!][Partial Recon] Graph update failed: {e}")
+        raise
+
+    print(f"\n[+][Partial Recon] Uncover expansion completed successfully")
+
+
+def run_osint_enrichment(config: dict) -> None:
+    """
+    Run partial OSINT Enrichment (Censys, FOFA, OTX, Netlas, VirusTotal, ZoomEye, CriminalIP).
+
+    Queries existing IPs from the graph and enriches them with passive OSINT data.
+    Enabled sub-tools run in parallel (same as the full pipeline GROUP 3b).
+    No user inputs -- OSINT enrichment starts from the domain and its discovered IPs.
+    """
+    import importlib
+    from concurrent.futures import ThreadPoolExecutor
+    from recon.project_settings import get_settings
+
+    domain = config["domain"]
+    user_id = os.environ.get("USER_ID", "")
+    project_id = os.environ.get("PROJECT_ID", "")
+    include_graph = config.get("include_graph_targets", True)
+
+    print(f"[*][Partial Recon] Loading project settings...")
+    settings = get_settings()
+
+    print(f"\n{'=' * 50}")
+    print(f"[*][Partial Recon] OSINT Enrichment (multi-tool)")
+    print(f"[*][Partial Recon] Domain: {domain}")
+    print(f"{'=' * 50}\n")
+
+    # Force-enable OSINT enrichment for partial recon (user explicitly triggered it)
+    settings["OSINT_ENRICHMENT_ENABLED"] = True
+
+    # Build combined_result from graph (IPs + subdomains)
+    if include_graph:
+        combined_result = _build_recon_data_from_graph(domain, user_id, project_id)
+    else:
+        combined_result = {
+            "domain": domain,
+            "dns": {
+                "domain": {"ips": {"ipv4": [], "ipv6": []}, "has_records": False},
+                "subdomains": {},
+            },
+        }
+
+    # Count IPs for logging
+    ip_count = len(combined_result.get("dns", {}).get("domain", {}).get("ips", {}).get("ipv4", []))
+    for _sub, info in combined_result.get("dns", {}).get("subdomains", {}).items():
+        ip_count += len(info.get("ips", {}).get("ipv4", []))
+    print(f"[+][Partial Recon] Found {ip_count} IPs from graph for enrichment")
+
+    if ip_count == 0:
+        print(f"[-][Partial Recon] No IPs found in graph. Run Subdomain Discovery first to populate IPs.")
+        return
+
+    # OSINT sub-tool registry (same as main.py GROUP 3b)
+    _osint_tools = {
+        'censys': ('CENSYS_ENABLED', 'recon.censys_enrich', 'run_censys_enrichment_isolated', 'update_graph_from_censys'),
+        'fofa': ('FOFA_ENABLED', 'recon.fofa_enrich', 'run_fofa_enrichment_isolated', 'update_graph_from_fofa'),
+        'otx': ('OTX_ENABLED', 'recon.otx_enrich', 'run_otx_enrichment_isolated', 'update_graph_from_otx'),
+        'netlas': ('NETLAS_ENABLED', 'recon.netlas_enrich', 'run_netlas_enrichment_isolated', 'update_graph_from_netlas'),
+        'virustotal': ('VIRUSTOTAL_ENABLED', 'recon.virustotal_enrich', 'run_virustotal_enrichment_isolated', 'update_graph_from_virustotal'),
+        'zoomeye': ('ZOOMEYE_ENABLED', 'recon.zoomeye_enrich', 'run_zoomeye_enrichment_isolated', 'update_graph_from_zoomeye'),
+        'criminalip': ('CRIMINALIP_ENABLED', 'recon.criminalip_enrich', 'run_criminalip_enrichment_isolated', 'update_graph_from_criminalip'),
+    }
+
+    # Filter to enabled sub-tools with valid API keys
+    enabled_osint = {
+        name: cfg for name, cfg in _osint_tools.items()
+        if settings.get(cfg[0], False)
+        and (
+            settings.get(f'{name.upper()}_API_KEY', '')
+            or (name == 'censys' and settings.get('CENSYS_API_TOKEN', ''))
+            or name == 'otx'  # OTX supports anonymous requests without an API key
+        )
+    }
+
+    if not enabled_osint:
+        print(f"[-][Partial Recon] No OSINT sub-tools are enabled or have valid API keys.")
+        print(f"[-][Partial Recon] Enable at least one OSINT tool in project settings and configure its API key.")
+        return
+
+    print(f"[+][Partial Recon] Enabled OSINT tools: {', '.join(enabled_osint.keys())}")
+
+    # Run enabled sub-tools in parallel (same pattern as main.py)
+    osint_workers = min(len(enabled_osint), 5)
+    with ThreadPoolExecutor(max_workers=osint_workers, thread_name_prefix="osint") as osint_exec:
+        osint_futures = {}
+        for name, (_, module_path, func_name, _) in enabled_osint.items():
+            mod = importlib.import_module(module_path)
+            fn = getattr(mod, func_name)
+            osint_futures[name] = osint_exec.submit(fn, combined_result, settings)
+
+        for name, future in osint_futures.items():
+            try:
+                data = future.result()
+                if data:
+                    combined_result[name] = data
+                    print(f"[+][{name.upper()}] Enrichment completed")
+                else:
+                    print(f"[-][{name.upper()}] No data returned")
+            except Exception as e:
+                print(f"[!][{name.upper()}] Enrichment failed: {e}")
+
+    # Update the graph database for each completed tool
+    print(f"[*][Partial Recon] Updating graph database...")
+    try:
+        from graph_db import Neo4jClient
+        with Neo4jClient() as graph_client:
+            if graph_client.verify_connection():
+                for name, (_, _, _, graph_method) in enabled_osint.items():
+                    if name in combined_result:
+                        try:
+                            update_fn = getattr(graph_client, graph_method)
+                            stats = update_fn(
+                                recon_data=combined_result,
+                                user_id=user_id,
+                                project_id=project_id,
+                            )
+                            print(f"[+][{name.upper()}] Graph updated: {json.dumps(stats, default=str)}")
+                        except Exception as e:
+                            print(f"[!][{name.upper()}] Graph update failed: {e}")
+            else:
+                print("[!][Partial Recon] Neo4j not reachable, graph not updated")
+    except Exception as e:
+        print(f"[!][Partial Recon] Graph update failed: {e}")
+        raise
+
+    print(f"\n[+][Partial Recon] OSINT enrichment completed successfully")
+
+
+def _cleanup_orphan_user_inputs(user_id: str, project_id: str) -> int:
+    """
+    Delete UserInput nodes that have no outgoing PRODUCED relationships.
+
+    After a partial recon tool runs, a UserInput node may have been created
+    for user-provided targets (generic IPs, URLs, etc.). If the scan produced
+    no results for those targets, the UserInput sits orphaned -- connected to
+    the Domain via HAS_USER_INPUT but with no PRODUCED children.
+
+    This function finds and deletes such orphans.
+
+    Returns:
+        Number of orphan UserInput nodes deleted.
+    """
+    try:
+        from graph_db import Neo4jClient
+        with Neo4jClient() as graph_client:
+            if not graph_client.verify_connection():
+                return 0
+            with graph_client.driver.session() as session:
+                result = session.run(
+                    """
+                    MATCH (ui:UserInput {user_id: $uid, project_id: $pid})
+                    WHERE NOT (ui)-[:PRODUCED]->()
+                    WITH ui, ui.id AS uid_id
+                    DETACH DELETE ui
+                    RETURN count(uid_id) AS deleted
+                    """,
+                    uid=user_id, pid=project_id,
+                )
+                record = result.single()
+                deleted = record["deleted"] if record else 0
+                if deleted:
+                    print(f"[+][Partial Recon] Cleaned up {deleted} orphan UserInput node(s) (no PRODUCED children)")
+                return deleted
+    except Exception as e:
+        print(f"[!][Partial Recon] UserInput cleanup failed: {e}")
+        return 0
+
+
 def main():
     config = load_config()
     tool_id = config.get("tool_id", "")
@@ -4033,9 +5146,29 @@ def main():
         run_ffuf(config)
     elif tool_id == "Arjun":
         run_arjun(config)
+    elif tool_id == "JsRecon":
+        run_jsrecon(config)
+    elif tool_id == "Nuclei":
+        run_nuclei(config)
+    elif tool_id == "SecurityChecks":
+        run_security_checks_partial(config)
+    elif tool_id == "Shodan":
+        run_shodan(config)
+    elif tool_id == "Urlscan":
+        run_urlscan(config)
+    elif tool_id == "Uncover":
+        run_uncover(config)
+    elif tool_id == "OsintEnrichment":
+        run_osint_enrichment(config)
     else:
         print(f"[!][Partial Recon] Unknown tool_id: {tool_id}")
         sys.exit(1)
+
+    # Clean up orphan UserInput nodes (created but no PRODUCED children)
+    user_id = os.environ.get("USER_ID", "")
+    project_id = os.environ.get("PROJECT_ID", "")
+    if user_id and project_id:
+        _cleanup_orphan_user_inputs(user_id, project_id)
 
 
 if __name__ == "__main__":

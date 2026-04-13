@@ -167,7 +167,7 @@ export interface PartialReconParams {
   settings_overrides?: Record<string, unknown>
 }
 
-export const PARTIAL_RECON_SUPPORTED_TOOLS = new Set(['SubdomainDiscovery', 'Naabu', 'Masscan', 'Nmap', 'Httpx', 'Katana', 'Hakrawler', 'Jsluice', 'Gau', 'Kiterunner', 'ParamSpider', 'Arjun', 'Ffuf'])
+export const PARTIAL_RECON_SUPPORTED_TOOLS = new Set(['SubdomainDiscovery', 'Naabu', 'Masscan', 'Nmap', 'Httpx', 'Katana', 'Hakrawler', 'Jsluice', 'Gau', 'Kiterunner', 'ParamSpider', 'Arjun', 'Ffuf', 'JsRecon', 'Nuclei', 'SecurityChecks', 'Shodan', 'Urlscan', 'Uncover', 'OsintEnrichment'])
 
 export const PARTIAL_RECON_PHASE_MAP: Record<string, readonly string[]> = {
   SubdomainDiscovery: ['Subdomain Discovery'],
@@ -183,6 +183,13 @@ export const PARTIAL_RECON_PHASE_MAP: Record<string, readonly string[]> = {
   ParamSpider: ['Resource Enumeration'],
   Arjun: ['Resource Enumeration'],
   Ffuf: ['Resource Enumeration'],
+  JsRecon: ['JS Recon'],
+  Nuclei: ['Vulnerability Scanning'],
+  SecurityChecks: ['Security Checks'],
+  Shodan: ['Shodan Enrichment'],
+  Urlscan: ['URLScan Enrichment'],
+  Uncover: ['Uncover Expansion'],
+  OsintEnrichment: ['OSINT Enrichment'],
 }
 
 // Backward-compatible default (SubdomainDiscovery phases)

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronDown, Radar, AlertTriangle, Info } from 'lucide-react'
+import { ChevronDown, Radar, AlertTriangle, Info, Play } from 'lucide-react'
 import { Toggle } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import { useProject } from '@/providers/ProjectProvider'
@@ -13,9 +13,10 @@ type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'use
 interface ShodanSectionProps {
   data: FormData
   updateField: <K extends keyof FormData>(field: K, value: FormData[K]) => void
+  onRun?: () => void
 }
 
-export function ShodanSection({ data, updateField }: ShodanSectionProps) {
+export function ShodanSection({ data, updateField, onRun }: ShodanSectionProps) {
   const [isOpen, setIsOpen] = useState(true)
   const { userId } = useProject()
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null) // null = loading
@@ -46,6 +47,22 @@ export function ShodanSection({ data, updateField }: ShodanSectionProps) {
           <span className={styles.badgePassive}>Passive</span>
         </h2>
         <div className={styles.sectionHeaderRight}>
+          {onRun && data.shodanEnabled && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onRun() }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                padding: '3px 8px', borderRadius: '4px',
+                border: '1px solid rgba(34, 197, 94, 0.3)',
+                backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: 500,
+              }}
+              title="Run Shodan Enrichment"
+            >
+              <Play size={10} /> Run partial recon
+            </button>
+          )}
           <div onClick={(e) => e.stopPropagation()}>
             <Toggle
               checked={data.shodanEnabled}
