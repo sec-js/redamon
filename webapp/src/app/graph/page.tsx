@@ -700,6 +700,13 @@ export default function GraphPage() {
     }
   }, [trufflehogState?.status, refetchGraph, checkTrufflehogData])
 
+  // Refresh graph when partial recon completes
+  useEffect(() => {
+    if (partialReconState?.status === 'completed' || partialReconState?.status === 'error') {
+      refetchGraph()
+    }
+  }, [partialReconState?.status, refetchGraph])
+
   const handleToggleAI = useCallback(() => {
     setIsAIOpen((prev) => !prev)
   }, [])

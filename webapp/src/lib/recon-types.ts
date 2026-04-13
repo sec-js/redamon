@@ -145,6 +145,7 @@ export interface GraphInputs {
   existing_ports_count?: number
   existing_baseurls_count?: number
   existing_baseurls?: string[]
+  existing_endpoints_count?: number
   source: 'graph' | 'settings'
 }
 
@@ -166,7 +167,7 @@ export interface PartialReconParams {
   settings_overrides?: Record<string, unknown>
 }
 
-export const PARTIAL_RECON_SUPPORTED_TOOLS = new Set(['SubdomainDiscovery', 'Naabu', 'Masscan', 'Nmap', 'Httpx', 'Katana', 'Hakrawler'])
+export const PARTIAL_RECON_SUPPORTED_TOOLS = new Set(['SubdomainDiscovery', 'Naabu', 'Masscan', 'Nmap', 'Httpx', 'Katana', 'Hakrawler', 'Jsluice', 'Gau', 'Kiterunner', 'ParamSpider', 'Arjun', 'Ffuf'])
 
 export const PARTIAL_RECON_PHASE_MAP: Record<string, readonly string[]> = {
   SubdomainDiscovery: ['Subdomain Discovery'],
@@ -176,6 +177,12 @@ export const PARTIAL_RECON_PHASE_MAP: Record<string, readonly string[]> = {
   Httpx: ['HTTP Probing'],
   Katana: ['Resource Enumeration'],
   Hakrawler: ['Resource Enumeration'],
+  Jsluice: ['Resource Enumeration'],
+  Gau: ['Resource Enumeration'],
+  Kiterunner: ['Resource Enumeration'],
+  ParamSpider: ['Resource Enumeration'],
+  Arjun: ['Resource Enumeration'],
+  Ffuf: ['Resource Enumeration'],
 }
 
 // Backward-compatible default (SubdomainDiscovery phases)

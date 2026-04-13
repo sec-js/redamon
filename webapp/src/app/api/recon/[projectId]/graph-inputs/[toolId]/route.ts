@@ -193,6 +193,209 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    else if (toolId === 'Jsluice') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             WITH d
+             OPTIONAL MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+             WITH d, collect(DISTINCT b.url) AS baseurls
+             RETURN d.name AS domain, baseurls, size(baseurls) AS baseurlCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const baseurls: string[] = record?.get('baseurls') || []
+          const baseurlCount = record?.get('baseurlCount')?.toNumber?.() ?? record?.get('baseurlCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: 0,
+              existing_baseurls: baseurls,
+              existing_baseurls_count: baseurlCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for Jsluice graph-inputs, falling back to settings:', err)
+      }
+    }
+
+    else if (toolId === 'Gau') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)
+             WITH d, collect(DISTINCT s.name) AS subdomains
+             RETURN d.name AS domain, subdomains, size(subdomains) AS subCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const subdomains: string[] = record?.get('subdomains') || []
+          const subCount = record?.get('subCount')?.toNumber?.() ?? record?.get('subCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains: subdomains,
+              existing_subdomains_count: subCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for Gau graph-inputs, falling back to settings:', err)
+      }
+    }
+
+    else if (toolId === 'ParamSpider') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)
+             WITH d, collect(DISTINCT s.name) AS subdomains
+             RETURN d.name AS domain, subdomains, size(subdomains) AS subCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const subdomains: string[] = record?.get('subdomains') || []
+          const subCount = record?.get('subCount')?.toNumber?.() ?? record?.get('subCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains: subdomains,
+              existing_subdomains_count: subCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for ParamSpider graph-inputs, falling back to settings:', err)
+      }
+    }
+
+    else if (toolId === 'Arjun') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             WITH d
+             OPTIONAL MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+             OPTIONAL MATCH (b)-[:HAS_ENDPOINT]->(e:Endpoint {user_id: $uid, project_id: $pid})
+             WITH d, collect(DISTINCT b.url) AS baseurls, count(DISTINCT e) AS endpointCount
+             RETURN d.name AS domain, baseurls, size(baseurls) AS baseurlCount, endpointCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const baseurls: string[] = record?.get('baseurls') || []
+          const baseurlCount = record?.get('baseurlCount')?.toNumber?.() ?? record?.get('baseurlCount') ?? 0
+          const endpointCount = record?.get('endpointCount')?.toNumber?.() ?? record?.get('endpointCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: 0,
+              existing_baseurls: baseurls,
+              existing_baseurls_count: baseurlCount,
+              existing_endpoints_count: endpointCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for Arjun graph-inputs, falling back to settings:', err)
+      }
+    }
+
+    else if (toolId === 'Ffuf') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             WITH d
+             OPTIONAL MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+             WITH d, collect(DISTINCT b.url) AS baseurls
+             RETURN d.name AS domain, baseurls, size(baseurls) AS baseurlCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const baseurls: string[] = record?.get('baseurls') || []
+          const baseurlCount = record?.get('baseurlCount')?.toNumber?.() ?? record?.get('baseurlCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: 0,
+              existing_baseurls: baseurls,
+              existing_baseurls_count: baseurlCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for Ffuf graph-inputs, falling back to settings:', err)
+      }
+    }
+
+    else if (toolId === 'Kiterunner') {
+      try {
+        const session = getSession()
+        try {
+          const result = await session.run(
+            `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+             WITH d
+             OPTIONAL MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
+             WITH d, collect(DISTINCT b.url) AS baseurls
+             RETURN d.name AS domain, baseurls, size(baseurls) AS baseurlCount`,
+            { uid: project.userId, pid: projectId }
+          )
+          const record = result.records[0]
+          const domain = record?.get('domain') || null
+          const baseurls: string[] = record?.get('baseurls') || []
+          const baseurlCount = record?.get('baseurlCount')?.toNumber?.() ?? record?.get('baseurlCount') ?? 0
+
+          if (domain) {
+            return NextResponse.json({
+              domain,
+              existing_subdomains_count: 0,
+              existing_baseurls: baseurls,
+              existing_baseurls_count: baseurlCount,
+              source: 'graph',
+            })
+          }
+        } finally {
+          await session.close()
+        }
+      } catch (err) {
+        console.warn('Neo4j query failed for Kiterunner graph-inputs, falling back to settings:', err)
+      }
+    }
+
     else if (toolId === 'Httpx') {
       try {
         const session = getSession()

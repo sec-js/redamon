@@ -54,6 +54,39 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Targets are loaded from the graph (BaseURLs from prior HTTP probing). ' +
     'You can also provide custom URLs below. ' +
     'Endpoint, Parameter, BaseURL, and ExternalDomain nodes are merged into the existing graph.',
+  Jsluice:
+    'Static analysis of JavaScript files using jsluice (Bishop Fox). Downloads JS files from discovered URLs ' +
+    'and extracts hidden API endpoints, paths, query parameters, and secrets (AWS keys, API tokens). ' +
+    'Targets are loaded from the graph (BaseURLs + Endpoints from prior crawling). ' +
+    'You can also provide custom URLs below. ' +
+    'Endpoint, Parameter, BaseURL, Secret, and ExternalDomain nodes are merged into the existing graph.',
+  Gau:
+    'Passive URL discovery from web archives (Wayback Machine, Common Crawl, OTX, URLScan). ' +
+    'Queries historical URLs for the target domain and all discovered subdomains without touching the target directly. ' +
+    'You can also provide custom subdomains below. ' +
+    'Endpoint, Parameter, BaseURL, and ExternalDomain nodes are merged into the existing graph.',
+  ParamSpider:
+    'Passive parameter discovery from the Wayback Machine. ' +
+    'Queries historical URLs containing query parameters for the target domain and all discovered subdomains. ' +
+    'You can also provide custom subdomains below. ' +
+    'Endpoint, Parameter, BaseURL, and ExternalDomain nodes are merged into the existing graph.',
+  Arjun:
+    'Tests ~25,000 common parameter names against discovered endpoints using Arjun. ' +
+    'Discovers hidden query/body parameters (debug params, admin functionality, hidden API inputs). ' +
+    'Targets are loaded from the graph (BaseURLs + Endpoints from prior resource enumeration). ' +
+    'You can also provide custom URLs below. ' +
+    'Parameter nodes are merged into the existing graph -- duplicates are updated, not recreated.',
+  Ffuf:
+    'Directory and file fuzzer that brute-forces paths on BaseURLs using wordlists to discover hidden endpoints. ' +
+    'Targets are loaded from the graph (BaseURLs from prior HTTP probing). ' +
+    'You can also provide custom URLs below. ' +
+    'Endpoint, BaseURL, and ExternalDomain nodes are merged into the existing graph.',
+  Kiterunner:
+    'API endpoint bruteforcing using Kiterunner from Assetnote. Tests Swagger/OpenAPI-derived wordlists against BaseURLs ' +
+    'to discover hidden REST API routes (including POST/PUT/DELETE endpoints). ' +
+    'Targets are loaded from the graph (BaseURLs from prior HTTP probing). ' +
+    'You can also provide custom URLs below. ' +
+    'Endpoint and BaseURL nodes are merged into the existing graph.',
 }
 
 // --- Validation helpers ---
@@ -99,10 +132,9 @@ function validateUrl(value: string, projectDomain?: string): string | null {
     const url = new URL(value)
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return `URL must use http or https: ${value}`
     if (!url.hostname) return `URL has no hostname: ${value}`
-    // TODO: re-enable scope check after debug
-    // if (projectDomain && !url.hostname.endsWith('.' + projectDomain) && url.hostname !== projectDomain) {
-    //   return `${url.hostname} is out of scope (not a subdomain of ${projectDomain})`
-    // }
+    if (projectDomain && !url.hostname.endsWith('.' + projectDomain) && url.hostname !== projectDomain) {
+      return `${url.hostname} is out of scope (not a subdomain of ${projectDomain})`
+    }
     return null
   } catch {
     return `Invalid URL: ${value}`
@@ -197,12 +229,15 @@ export function PartialReconModal({
   const isPortScanner = toolId === 'Naabu' || toolId === 'Masscan'
   const isNmap = toolId === 'Nmap'
   const isHttpx = toolId === 'Httpx'
-  const isResourceEnum = toolId === 'Katana' || toolId === 'Hakrawler'
-  const hasUserInputs = isPortScanner || isNmap || isHttpx || isResourceEnum
+  const isResourceEnum = toolId === 'Katana' || toolId === 'Hakrawler' || toolId === 'Jsluice' || toolId === 'Ffuf' || toolId === 'Kiterunner'
+  const isArjun = toolId === 'Arjun'
+  const isGau = toolId === 'Gau'
+  const isParamSpider = toolId === 'ParamSpider'
+  const hasUserInputs = isPortScanner || isNmap || isHttpx || isResourceEnum || isArjun || isGau || isParamSpider
   const hasIpInput = isPortScanner || isNmap || isHttpx
-  const hasSubdomainInput = toolId === 'Naabu' || isHttpx
+  const hasSubdomainInput = toolId === 'Naabu' || isHttpx || isGau || isParamSpider
   const hasPortInput = isNmap || isHttpx
-  const hasUrlInput = isResourceEnum
+  const hasUrlInput = isResourceEnum || isArjun
 
   // Subdomain validation
   const subdomainValidation = useMemo(
@@ -316,11 +351,13 @@ export function PartialReconModal({
     || (isNmap && !loadingInputs && (graphInputs?.existing_ports_count ?? 0) === 0)
     || (isHttpx && !loadingInputs && (graphInputs?.existing_ports_count ?? 0) === 0 && (graphInputs?.existing_subdomains_count ?? 0) === 0)
     || (isResourceEnum && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0)
+    || (isArjun && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0 && (graphInputs?.existing_endpoints_count ?? 0) === 0)
   const hasNoCustomTargets = (!hasSubdomainInput || !customSubdomains.trim()) && (!hasIpInput || !customIps.trim()) && !customPorts.trim() && (!hasUrlInput || !customUrls.trim())
-  const noTargetsToScan = hasUserInputs && !includeGraphTargets && hasNoCustomTargets
+  const noTargetsToScan = hasUserInputs && !isGau && !isParamSpider && !includeGraphTargets && hasNoCustomTargets
   const nmapNoPorts = isNmap && !includeGraphTargets && !customPorts.trim()
   const httpxNoPorts = isHttpx && !includeGraphTargets && !customPorts.trim() && !customSubdomains.trim()
   const resourceEnumNoUrls = isResourceEnum && !includeGraphTargets && !customUrls.trim()
+  const arjunNoUrls = isArjun && !includeGraphTargets && !customUrls.trim()
 
   return (
     <Modal
@@ -353,6 +390,10 @@ export function PartialReconModal({
                 ? `${domain || 'No domain'} (${graphInputs?.existing_subdomains_count ?? 0} subdomains, ${graphInputs?.existing_ports_count ?? 0} ports, ${graphInputs?.existing_baseurls_count ?? 0} existing URLs)`
                 : isResourceEnum
                 ? `${domain || 'No domain'} (${graphInputs?.existing_baseurls_count ?? 0} BaseURLs)`
+                : isArjun
+                ? `${domain || 'No domain'} (${graphInputs?.existing_baseurls_count ?? 0} BaseURLs, ${graphInputs?.existing_endpoints_count ?? 0} Endpoints)`
+                : isGau || isParamSpider
+                ? `${domain || 'No domain'} (${graphInputs?.existing_subdomains_count ?? 0} subdomains)`
                 : toolId === 'Naabu'
                 ? `${domain || 'No domain'} (${graphInputs?.existing_ips_count ?? 0} IPs, ${graphInputs?.existing_subdomains_count ?? 0} subdomains)`
                 : toolId === 'Masscan'
@@ -430,6 +471,8 @@ export function PartialReconModal({
               ? 'No subdomains or ports found in graph. Run Subdomain Discovery + Port Scanning first, or provide custom subdomains below.'
               : isResourceEnum
               ? 'No BaseURLs found in graph. Run HTTP Probing (Httpx) first to discover live URLs, or provide custom URLs below.'
+              : isArjun
+              ? 'No BaseURLs or Endpoints found in graph. Run Resource Enumeration (Katana/Hakrawler) first, or provide custom URLs below.'
               : 'No IPs found in graph. Run Subdomain Discovery first to populate the graph, or provide custom targets below.'}
           </div>
         )}
@@ -462,7 +505,17 @@ export function PartialReconModal({
             fontSize: '11px', color: '#f87171', lineHeight: '1.5', padding: '8px 12px', borderRadius: '6px',
             backgroundColor: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)',
           }}>
-            {toolId} requires URLs to crawl. Provide custom URLs below or enable graph targets (which include existing BaseURLs from Httpx).
+            {toolId === 'Jsluice'
+              ? 'Jsluice requires URLs to analyze. Provide custom URLs below or enable graph targets (which include existing Endpoints from Katana/Hakrawler).'
+              : `${toolId} requires URLs to crawl. Provide custom URLs below or enable graph targets (which include existing BaseURLs from Httpx).`}
+          </div>
+        )}
+        {arjunNoUrls && !noTargetsToScan && (
+          <div style={{
+            fontSize: '11px', color: '#f87171', lineHeight: '1.5', padding: '8px 12px', borderRadius: '6px',
+            backgroundColor: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)',
+          }}>
+            Arjun requires endpoints to test for parameters. Provide custom URLs below or enable graph targets (which include existing BaseURLs + Endpoints from crawling).
           </div>
         )}
 
@@ -587,7 +640,11 @@ export function PartialReconModal({
             <textarea
               value={customUrls}
               onChange={e => setCustomUrls(e.target.value)}
-              placeholder={'https://example.com\nhttps://api.example.com:8443'}
+              placeholder={isArjun
+                ? 'https://example.com/api/users\nhttps://example.com/admin/settings'
+                : toolId === 'Jsluice'
+                ? 'https://example.com/assets/app.js\nhttps://cdn.example.com/bundle.min.js'
+                : 'https://example.com\nhttps://api.example.com:8443'}
               rows={2}
               style={textareaStyle(urlValidation.errors.length > 0)}
             />
@@ -598,7 +655,11 @@ export function PartialReconModal({
                 ))}
               </div>
             ) : (
-              <div style={hintStyle}>Full URLs (http/https). Will be crawled to discover endpoints and parameters.</div>
+              <div style={hintStyle}>{isArjun
+                ? 'Full endpoint URLs to test for hidden query/body parameters (e.g. /api/users, /login, /admin/settings).'
+                : toolId === 'Jsluice'
+                ? 'Full URLs to JS files. Will be downloaded and analyzed for hidden endpoints and secrets.'
+                : 'Full URLs (http/https). Will be crawled to discover endpoints and parameters.'}</div>
             )}
 
             {/* Dropdown: associate URLs to BaseURL */}
@@ -669,14 +730,14 @@ export function PartialReconModal({
           <button
             type="button"
             onClick={handleRun}
-            disabled={!domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls}
+            disabled={!domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls || arjunNoUrls}
             style={{
               padding: '8px 16px', borderRadius: '6px', border: 'none',
               backgroundColor: '#3b82f6', color: '#fff',
-              cursor: !domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls ? 'not-allowed' : 'pointer',
+              cursor: !domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls || arjunNoUrls ? 'not-allowed' : 'pointer',
               fontSize: '13px',
               display: 'flex', alignItems: 'center', gap: '6px',
-              opacity: !domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls ? 0.5 : 1,
+              opacity: !domain || isStarting || hasValidationErrors || noTargetsToScan || nmapNoPorts || httpxNoPorts || resourceEnumNoUrls || arjunNoUrls ? 0.5 : 1,
             }}
           >
             {isStarting ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}

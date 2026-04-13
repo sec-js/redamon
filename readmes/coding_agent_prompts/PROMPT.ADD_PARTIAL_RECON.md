@@ -1,5 +1,5 @@
 # ADD PARTIAL RECON FOR A NEW PIPELINE SECTION
-# THIS IS THE TOO, SECTION TO IMPLEMENT: 
+# THIS IS THE TOOL SECTION TO IMPLEMENT: 
 
 Extend the partial recon system to support a new tool/section from the recon pipeline. Partial recon lets users run a single pipeline phase on demand from the workflow graph, without running the full pipeline. Results are merged into the existing Neo4j graph (always deduplicated via MERGE).
 

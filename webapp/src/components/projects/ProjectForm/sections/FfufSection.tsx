@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { ChevronDown, FolderSearch, Upload, X, Loader2 } from 'lucide-react'
+import { ChevronDown, FolderSearch, Upload, X, Loader2, Play } from 'lucide-react'
 import { Toggle } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
@@ -28,9 +28,10 @@ interface FfufSectionProps {
   updateField: <K extends keyof FormData>(field: K, value: FormData[K]) => void
   projectId?: string
   mode: 'create' | 'edit'
+  onRun?: () => void
 }
 
-export function FfufSection({ data, updateField, projectId, mode }: FfufSectionProps) {
+export function FfufSection({ data, updateField, projectId, mode, onRun }: FfufSectionProps) {
   const [isOpen, setIsOpen] = useState(true)
   const [customWordlists, setCustomWordlists] = useState<CustomWordlist[]>([])
   const [isUploading, setIsUploading] = useState(false)
@@ -128,6 +129,22 @@ export function FfufSection({ data, updateField, projectId, mode }: FfufSectionP
           <span className={styles.badgeActive}>Active</span>
         </h2>
         <div className={styles.sectionHeaderRight}>
+          {onRun && data.ffufEnabled && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onRun() }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                padding: '3px 8px', borderRadius: '4px',
+                border: '1px solid rgba(34, 197, 94, 0.3)',
+                backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: 500,
+              }}
+              title="Run FFuf"
+            >
+              <Play size={10} /> Run partial recon
+            </button>
+          )}
           <div onClick={(e) => e.stopPropagation()}>
             <Toggle
               checked={data.ffufEnabled}

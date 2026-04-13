@@ -764,7 +764,7 @@ def discover_subdomains(domain: str, anonymous: bool = False, bruteforce: bool =
         "domain": domain,
         "subdomains": all_subs,
         "subdomain_count": len(all_subs),
-        "dns": None,
+        "dns": {},
         "external_domains": external_domain_entries,
     }
     

@@ -2848,5 +2848,251 @@ class TestRunHakrawler(unittest.TestCase):
         self.assertEqual(target_urls.count("https://example.com"), 1)
 
 
+class TestRunJsluice(unittest.TestCase):
+    """Tests for run_jsluice using module-level mocks."""
+
+    def _run_with_mocks(self, config, neo4j_connected=True, graph_endpoints=None, graph_baseurls=None):
+        """Helper that sets up all mocks and runs run_jsluice."""
+        mock_settings = MagicMock()
+        mock_settings.return_value = {
+            "JSLUICE_ENABLED": True, "JSLUICE_MAX_FILES": 100,
+            "JSLUICE_TIMEOUT": 300, "JSLUICE_EXTRACT_URLS": True,
+            "JSLUICE_EXTRACT_SECRETS": True, "JSLUICE_CONCURRENCY": 5,
+            "TOR_ENABLED": False,
+        }
+
+        mock_jsluice_analysis = MagicMock(return_value={
+            "urls": ["https://example.com/api/v1/users", "https://example.com/api/v1/config"],
+            "secrets": [{"kind": "api_key", "severity": "high", "base_url": "https://example.com",
+                         "source_url": "https://example.com/js/app.js", "data": "AKIA..."}],
+            "external_domains": [{"domain": "cdn.external.com", "source": "jsluice",
+                                  "url": "https://cdn.external.com/lib.js"}],
+        })
+        mock_merge = MagicMock(return_value=(
+            {
+                "https://example.com": {
+                    "endpoints": {
+                        "/api/v1/users": {
+                            "methods": ["GET"], "category": "api",
+                            "parameter_count": {"query": 0, "body": 0, "path": 0, "total": 0},
+                            "urls_found": 1, "parameters": {"query": [], "body": [], "path": []},
+                            "sources": ["jsluice"],
+                        },
+                        "/api/v1/config": {
+                            "methods": ["GET"], "category": "api",
+                            "parameter_count": {"query": 0, "body": 0, "path": 0, "total": 0},
+                            "urls_found": 1, "parameters": {"query": [], "body": [], "path": []},
+                            "sources": ["jsluice"],
+                        },
+                    },
+                    "summary": {"total_endpoints": 2, "total_parameters": 0},
+                },
+            },
+            {"jsluice_total": 2, "jsluice_parsed": 2, "jsluice_new": 2, "jsluice_overlap": 0},
+        ))
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = neo4j_connected
+        mock_client.update_graph_from_resource_enum.return_value = {
+            "endpoints_created": 2, "parameters_created": 0,
+            "forms_created": 0, "secrets_created": 1,
+            "relationships_created": 3, "errors": [],
+        }
+
+        _graph_endpoints = graph_endpoints if graph_endpoints is not None else [
+            {"url": "https://example.com/js/app.js"},
+            {"url": "https://example.com/js/vendor.js"},
+        ]
+        _graph_baseurls = graph_baseurls if graph_baseurls is not None else [
+            {"url": "https://example.com", "host": "example.com"},
+        ]
+        _graph_subdomains = ["www.example.com"]
+
+        def mock_session_run(query, **kwargs):
+            result = MagicMock()
+            if "Endpoint" in query and "baseurl" in query:
+                records = []
+                for ep_data in _graph_endpoints:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=ep_data: d.get(key)
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+            elif "BaseURL" in query and "b.url" in query:
+                records = []
+                for bu_data in _graph_baseurls:
+                    record = MagicMock()
+                    record.__getitem__ = lambda self, key, d=bu_data: d.get(key)
+                    records.append(record)
+                result.__iter__ = lambda self, r=records: iter(r)
+            elif "HAS_SUBDOMAIN" in query:
+                record = MagicMock()
+                record.__getitem__ = lambda self, key: _graph_subdomains
+                result.single.return_value = record
+                result.__iter__ = lambda self: iter([])
+            else:
+                result.__iter__ = lambda self: iter([])
+                result.single.return_value = None
+            return result
+
+        mock_session = MagicMock()
+        mock_session.run = mock_session_run
+
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.driver = mock_driver
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+
+        mock_helpers_resource_enum = MagicMock()
+        mock_helpers_resource_enum.run_jsluice_analysis = mock_jsluice_analysis
+        mock_helpers_resource_enum.merge_jsluice_into_by_base_url = mock_merge
+
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        mock_helpers = MagicMock()
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'recon.helpers.resource_enum': mock_helpers_resource_enum,
+            'recon.helpers': mock_helpers,
+            'graph_db': mock_graph_db,
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        os.environ.setdefault("USER_ID", "user1")
+        os.environ.setdefault("PROJECT_ID", "proj1")
+
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            pr.run_jsluice(config)
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+        return {
+            "settings": mock_settings,
+            "jsluice_analysis": mock_jsluice_analysis,
+            "merge": mock_merge,
+            "neo4j_client": mock_client,
+            "neo4j_cls": mock_neo4j_cls,
+        }
+
+    def test_basic_scan_graph_only(self):
+        """Graph-only scan loads Endpoints and runs jsluice analysis."""
+        mocks = self._run_with_mocks({"domain": "example.com", "user_inputs": []})
+        mocks["jsluice_analysis"].assert_called_once()
+        mocks["merge"].assert_called_once()
+        mocks["neo4j_client"].update_graph_from_resource_enum.assert_called_once()
+
+    def test_user_urls_injected(self):
+        """User-provided URLs are added to jsluice targets."""
+        mocks = self._run_with_mocks({
+            "domain": "example.com",
+            "user_inputs": [],
+            "user_targets": {"urls": ["https://example.com/js/custom.js"], "url_attach_to": None},
+        })
+        mocks["jsluice_analysis"].assert_called_once()
+        call_args = mocks["jsluice_analysis"].call_args
+        target_urls = call_args[0][0]
+        self.assertIn("https://example.com/js/custom.js", target_urls)
+
+    def test_user_urls_only_no_graph(self):
+        """With graph targets disabled, only user URLs are analyzed."""
+        mocks = self._run_with_mocks({
+            "domain": "example.com",
+            "user_inputs": [],
+            "user_targets": {"urls": ["https://example.com/js/app.js"], "url_attach_to": None},
+            "include_graph_targets": False,
+        })
+        mocks["jsluice_analysis"].assert_called_once()
+        call_args = mocks["jsluice_analysis"].call_args
+        target_urls = call_args[0][0]
+        self.assertEqual(len(target_urls), 1)
+        self.assertIn("https://example.com/js/app.js", target_urls)
+
+    def test_invalid_urls_skipped(self):
+        """Invalid URLs are skipped, only valid ones reach jsluice."""
+        mocks = self._run_with_mocks({
+            "domain": "example.com",
+            "user_inputs": [],
+            "user_targets": {"urls": ["not-a-url", "ftp://bad.com", "https://example.com/js/good.js"], "url_attach_to": None},
+        })
+        mocks["jsluice_analysis"].assert_called_once()
+        call_args = mocks["jsluice_analysis"].call_args
+        target_urls = call_args[0][0]
+        self.assertIn("https://example.com/js/good.js", target_urls)
+        self.assertNotIn("not-a-url", target_urls)
+        self.assertNotIn("ftp://bad.com", target_urls)
+
+    def test_no_targets_exits(self):
+        """Exits with code 1 when no Endpoints in graph and no user URLs."""
+        with self.assertRaises(SystemExit) as cm:
+            self._run_with_mocks(
+                {"domain": "example.com", "user_inputs": [], "include_graph_targets": False},
+                graph_endpoints=[], graph_baseurls=[],
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_generic_user_urls_create_userinput(self):
+        """When url_attach_to is null, a UserInput node should be created."""
+        mocks = self._run_with_mocks({
+            "domain": "example.com",
+            "user_inputs": [],
+            "user_targets": {"urls": ["https://example.com/js/custom.js"], "url_attach_to": None},
+        })
+        mocks["neo4j_client"].create_user_input_node.assert_called_once()
+        call_kwargs = mocks["neo4j_client"].create_user_input_node.call_args
+        user_input_data = call_kwargs[1].get("user_input_data") or call_kwargs[0][1]
+        self.assertEqual(user_input_data["input_type"], "urls")
+        self.assertEqual(user_input_data["tool_id"], "Jsluice")
+
+    def test_attached_user_urls_no_userinput(self):
+        """When url_attach_to is set, no UserInput node should be created."""
+        mocks = self._run_with_mocks({
+            "domain": "example.com",
+            "user_inputs": [],
+            "user_targets": {"urls": ["https://example.com/js/custom.js"], "url_attach_to": "https://example.com"},
+        })
+        mocks["neo4j_client"].create_user_input_node.assert_not_called()
+
+    def test_secrets_passed_to_graph(self):
+        """jsluice secrets are included in the resource_enum data for graph update."""
+        mocks = self._run_with_mocks({"domain": "example.com", "user_inputs": []})
+        call_kwargs = mocks["neo4j_client"].update_graph_from_resource_enum.call_args
+        recon_data = call_kwargs[1].get("recon_data") or call_kwargs[0][0]
+        resource_enum = recon_data.get("resource_enum", {})
+        secrets = resource_enum.get("jsluice_secrets", [])
+        self.assertEqual(len(secrets), 1)
+        self.assertEqual(secrets[0]["kind"], "api_key")
+        self.assertEqual(secrets[0]["severity"], "high")
+        self.assertEqual(secrets[0]["base_url"], "https://example.com")
+
+    def test_merge_called_with_correct_args(self):
+        """merge_jsluice_into_by_base_url receives jsluice URLs and empty starting dict."""
+        mocks = self._run_with_mocks({"domain": "example.com", "user_inputs": []})
+        mocks["merge"].assert_called_once()
+        call_args = mocks["merge"].call_args
+        # First arg: URLs list from run_jsluice_analysis
+        self.assertEqual(sorted(call_args[0][0]),
+                         ["https://example.com/api/v1/config", "https://example.com/api/v1/users"])
+        # Second arg: empty dict (jsluice is the only source in partial recon)
+        self.assertEqual(call_args[0][1], {})
+
+
 if __name__ == "__main__":
     unittest.main()

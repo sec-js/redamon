@@ -55,7 +55,7 @@ class ReconMixin:
             metadata = recon_data.get("metadata", {})
             whois_data = recon_data.get("whois", {})
             subdomains = recon_data.get("subdomains", [])
-            dns_data = recon_data.get("dns", {})
+            dns_data = recon_data.get("dns") or {}
 
             root_domain = metadata.get("root_domain", "")
             target = metadata.get("target", "")
@@ -289,7 +289,7 @@ class ReconMixin:
             metadata = recon_data.get("metadata", {})
             whois_data = recon_data.get("whois", {})
             subdomains = recon_data.get("subdomains", [])
-            dns_data = recon_data.get("dns", {})
+            dns_data = recon_data.get("dns") or {}
             ip_to_hostname = metadata.get("ip_to_hostname", {})
             ip_whois = whois_data.get("ip_whois", {})
 
@@ -2520,13 +2520,11 @@ class ReconMixin:
 
         def is_in_scope(base_url: str) -> bool:
             """Check if a base URL's hostname is within the scan scope."""
-            # TODO: re-enable scope check after debug
-            return True
-            # if not target_subdomains:
-            #     return True  # No filter if no subdomains defined
-            # parsed = urlparse(base_url)
-            # host = parsed.netloc.split(":")[0] if ":" in parsed.netloc else parsed.netloc
-            # return host in target_subdomains
+            if not target_subdomains:
+                return True  # No filter if no subdomains defined
+            parsed = urlparse(base_url)
+            host = parsed.netloc.split(":")[0] if ":" in parsed.netloc else parsed.netloc
+            return host in target_subdomains
 
         with self.driver.session() as session:
             # Ensure schema is initialized
@@ -3370,7 +3368,7 @@ class ReconMixin:
         }
 
         subdomains = recon_data.get("subdomains", [])
-        dns_data = recon_data.get("dns", {})
+        dns_data = recon_data.get("dns") or {}
         domain = recon_data.get("domain", "")
 
         if not domain:
@@ -3658,6 +3656,25 @@ class ReconMixin:
                     "existing_ips_count": record["ip_count"] or 0,
                     "existing_ports_count": record["port_count"] or 0,
                     "existing_baseurls_count": record["baseurl_count"] or 0,
+                    "source": "graph" if record["domain"] else "settings",
+                }
+
+            elif tool_id in ("Gau", "ParamSpider"):
+                # Get domain and subdomain count for passive URL discovery tools
+                result = session.run(
+                    """
+                    OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
+                    OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)
+                    WITH d, collect(DISTINCT s.name) AS subdomains
+                    RETURN d.name AS domain, subdomains, size(subdomains) AS sub_count
+                    """,
+                    uid=user_id, pid=project_id,
+                )
+                record = result.single()
+                return {
+                    "domain": record["domain"] if record["domain"] else None,
+                    "existing_subdomains": record["subdomains"] or [],
+                    "existing_subdomains_count": record["sub_count"] or 0,
                     "source": "graph" if record["domain"] else "settings",
                 }
 

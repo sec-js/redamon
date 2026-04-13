@@ -42,6 +42,10 @@ describe('PARTIAL_RECON_SUPPORTED_TOOLS', () => {
     expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('Hakrawler')).toBe(true)
   })
 
+  test('contains Jsluice', () => {
+    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('Jsluice')).toBe(true)
+  })
+
   test('does not contain unsupported tools', () => {
     expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('Nuclei')).toBe(false)
   })
@@ -82,6 +86,11 @@ describe('PARTIAL_RECON_PHASE_MAP', () => {
   test('has Hakrawler phases', () => {
     expect(PARTIAL_RECON_PHASE_MAP['Hakrawler']).toHaveLength(1)
     expect(PARTIAL_RECON_PHASE_MAP['Hakrawler'][0]).toBe('Resource Enumeration')
+  })
+
+  test('has Jsluice phases', () => {
+    expect(PARTIAL_RECON_PHASE_MAP['Jsluice']).toHaveLength(1)
+    expect(PARTIAL_RECON_PHASE_MAP['Jsluice'][0]).toBe('Resource Enumeration')
   })
 
   test('each supported tool has a phase entry', () => {
@@ -419,6 +428,44 @@ describe('PartialReconParams type shape', () => {
   test('Hakrawler params without user_targets (graph only)', () => {
     const params: PartialReconParams = {
       tool_id: 'Hakrawler',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+    }
+    expect(params.user_targets).toBeUndefined()
+  })
+
+  test('Jsluice params with structured user_targets (URLs)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'Jsluice',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+      user_targets: {
+        subdomains: [], ips: [], ip_attach_to: null,
+        urls: ['https://example.com/js/app.js', 'https://example.com/js/vendor.js'],
+        url_attach_to: 'https://example.com',
+      },
+    }
+    expect(params.tool_id).toBe('Jsluice')
+    expect(params.user_targets?.urls).toHaveLength(2)
+    expect(params.user_targets?.url_attach_to).toBe('https://example.com')
+  })
+
+  test('Jsluice params with generic URLs (no attach)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'Jsluice',
+      graph_inputs: { domain: 'example.com' },
+      user_inputs: [],
+      user_targets: {
+        subdomains: [], ips: [], ip_attach_to: null,
+        urls: ['https://example.com/js/app.js'], url_attach_to: null,
+      },
+    }
+    expect(params.user_targets?.url_attach_to).toBeNull()
+  })
+
+  test('Jsluice params without user_targets (graph only)', () => {
+    const params: PartialReconParams = {
+      tool_id: 'Jsluice',
       graph_inputs: { domain: 'example.com' },
       user_inputs: [],
     }

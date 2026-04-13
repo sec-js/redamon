@@ -292,7 +292,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
 
     if not target_urls:
         # Fallback to DNS data
-        dns_data = recon_data.get('dns', {})
+        dns_data = recon_data.get('dns') or {}
         domain = recon_data.get('domain', '')
         
         # Include root domain if it has DNS records

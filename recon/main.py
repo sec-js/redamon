@@ -1089,7 +1089,7 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
             combined_result["metadata"]["modules_executed"].append("subdomain_discovery")
             if recon_result.get("external_domains"):
                 combined_result["domain_discovery_external_domains"] = recon_result["external_domains"]
-            combined_result["dns"] = recon_result.get("dns", {})
+            combined_result["dns"] = recon_result.get("dns") or {}
             # Pass subdomain status map (filtered to match ROE-filtered subdomains)
             status_map = recon_result.get("subdomain_status_map", {})
             status_map = {s: st for s, st in status_map.items() if s in set(discovered_subs)}
