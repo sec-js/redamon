@@ -23,6 +23,8 @@ interface FireteamCardProps {
   onAddApiKey?: (toolId: string) => void
   onToolConfirmation?: (itemId: string, decision: 'approve' | 'reject') => void
   toolConfirmationDisabled?: boolean
+  /** Cancel a single running tool inside one of this fireteam's members. */
+  onToolStop?: (itemId: string) => void
 }
 
 function headerIcon(status: FireteamItem['status']) {
@@ -42,7 +44,7 @@ function headerIcon(status: FireteamItem['status']) {
   }
 }
 
-export function FireteamCard({ item, missingApiKeys, onAddApiKey, onToolConfirmation, toolConfirmationDisabled }: FireteamCardProps) {
+export function FireteamCard({ item, missingApiKeys, onAddApiKey, onToolConfirmation, toolConfirmationDisabled, onToolStop }: FireteamCardProps) {
   const [expanded, setExpanded] = useState(true)
   const counts = item.status_counts ?? {}
   const countStrs: string[] = []
@@ -82,6 +84,7 @@ export function FireteamCard({ item, missingApiKeys, onAddApiKey, onToolConfirma
                 onAddApiKey={onAddApiKey}
                 onToolConfirmation={onToolConfirmation}
                 toolConfirmationDisabled={toolConfirmationDisabled}
+                onToolStop={onToolStop}
               />
             ))}
           </div>

@@ -493,7 +493,7 @@ async def get_defaults():
     # (e.g. HYDRA_ENABLED -> hydraEnabled, not agentHydraEnabled)
     NO_PREFIX_KEYS = {k for k in DEFAULT_AGENT_SETTINGS if k.startswith(('HYDRA_', 'PHISHING_', 'ROE_', 'ATTACK_SKILL_', 'SHODAN_', 'DOS_', 'FIRETEAM_'))}
     # Exclude internal-only fireteam keys that the frontend should not see.
-    SKIP_KEYS = SKIP_KEYS | {'FIRETEAM_TOOL_TIMEOUT_S', 'PERSISTENT_CHECKPOINTER'}
+    SKIP_KEYS = SKIP_KEYS | {'PERSISTENT_CHECKPOINTER'}
 
     camel_case_defaults = {}
     for k, v in DEFAULT_AGENT_SETTINGS.items():

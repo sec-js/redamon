@@ -194,6 +194,8 @@ async def emit_streaming_events(state: dict, callback) -> None:
                         decision.get("thought", ""),
                         decision.get("reasoning", ""),
                         action=decision.get("action"),
+                        input_tokens=int(state.get("_input_tokens_this_turn", 0) or 0),
+                        output_tokens=int(state.get("_output_tokens_this_turn", 0) or 0),
                     )
                     callback._emitted_thinking_ids.add(think_id)
                 except Exception as e:

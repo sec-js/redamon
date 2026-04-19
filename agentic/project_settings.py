@@ -32,7 +32,6 @@ DANGEROUS_TOOLS = frozenset({
 # =============================================================================
 TOOL_MUTEX_GROUPS = {
     'metasploit': frozenset({'metasploit_console', 'msf_restart'}),
-    'browser': frozenset({'execute_playwright'}),
 }
 
 # =============================================================================
@@ -58,9 +57,8 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     'FIRETEAM_MAX_CONCURRENT': 5,                # asyncio.Semaphore permits
     'FIRETEAM_MAX_MEMBERS': 5,                   # hard cap on members per fireteam
     'FIRETEAM_MEMBER_MAX_ITERATIONS': 20,        # per-member ReAct iteration budget
-    'FIRETEAM_TIMEOUT_SEC': 1800,                  # wall-clock per fireteam
+    'FIRETEAM_TIMEOUT_SEC': 3600,                  # wall-clock per fireteam (raised to accommodate 30-min tool timeouts)
     'FIRETEAM_ALLOWED_PHASES': ['informational', 'exploitation', 'post_exploitation'],
-    'FIRETEAM_TOOL_TIMEOUT_S': 600,              # inherits from parent tool timeout
     'FIRETEAM_CONFIRMATION_TIMEOUT_SEC': 600,    # how long a member waits for operator approval before auto-rejecting
 
     # Phase Configuration
@@ -309,6 +307,7 @@ def fetch_agent_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['FIRETEAM_MEMBER_MAX_ITERATIONS'] = int(project.get('fireteamMemberMaxIterations', DEFAULT_AGENT_SETTINGS['FIRETEAM_MEMBER_MAX_ITERATIONS']))
     settings['FIRETEAM_TIMEOUT_SEC'] = int(project.get('fireteamTimeoutSec', DEFAULT_AGENT_SETTINGS['FIRETEAM_TIMEOUT_SEC']))
     settings['FIRETEAM_ALLOWED_PHASES'] = list(project.get('fireteamAllowedPhases', DEFAULT_AGENT_SETTINGS['FIRETEAM_ALLOWED_PHASES']))
+    settings['FIRETEAM_CONFIRMATION_TIMEOUT_SEC'] = int(project.get('fireteamConfirmationTimeoutSec', DEFAULT_AGENT_SETTINGS['FIRETEAM_CONFIRMATION_TIMEOUT_SEC']))
     settings['PHISHING_SMTP_CONFIG'] = project.get('phishingSmtpConfig', DEFAULT_AGENT_SETTINGS['PHISHING_SMTP_CONFIG'])
     settings['DOS_MAX_DURATION'] = project.get('dosMaxDuration', DEFAULT_AGENT_SETTINGS['DOS_MAX_DURATION'])
     settings['DOS_MAX_ATTEMPTS'] = project.get('dosMaxAttempts', DEFAULT_AGENT_SETTINGS['DOS_MAX_ATTEMPTS'])

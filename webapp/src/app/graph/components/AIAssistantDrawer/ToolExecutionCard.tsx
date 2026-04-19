@@ -8,7 +8,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Wrench, ChevronDown, ChevronRight, Copy, Check, Loader2, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
+import { Wrench, ChevronDown, ChevronRight, Copy, Check, Loader2, CheckCircle2, XCircle, AlertTriangle, Square } from 'lucide-react'
 import { ExternalLink } from '@/components/ui'
 import { isHttpUrl } from '@/lib/url-utils'
 import styles from './ToolExecutionCard.module.css'
@@ -31,9 +31,13 @@ interface ToolExecutionCardProps {
   onApprove?: () => void
   onReject?: () => void
   confirmationDisabled?: boolean
+  /** Cancel just this running tool (same semantics as the global Stop
+   *  button, scoped to one card). Shown in the card header only while
+   *  status === 'running'. */
+  onStop?: () => void
 }
 
-export function ToolExecutionCard({ item, isExpanded, onToggleExpand, missingApiKey, onAddApiKey, onApprove, onReject, confirmationDisabled }: ToolExecutionCardProps) {
+export function ToolExecutionCard({ item, isExpanded, onToggleExpand, missingApiKey, onAddApiKey, onApprove, onReject, confirmationDisabled, onStop }: ToolExecutionCardProps) {
   const [copied, setCopied] = useState(false)
   const [duration, setDuration] = useState(0)
 
@@ -159,6 +163,16 @@ export function ToolExecutionCard({ item, isExpanded, onToggleExpand, missingApi
                 <button className={styles.allowBtn} onClick={(e) => { e.stopPropagation(); onApprove() }} disabled={confirmationDisabled}>Allow</button>
                 <button className={styles.denyBtn} onClick={(e) => { e.stopPropagation(); onReject?.() }} disabled={confirmationDisabled}>Deny</button>
               </div>
+            )}
+            {item.status === 'running' && onStop && (
+              <button
+                className={styles.stopButton}
+                onClick={(e) => { e.stopPropagation(); onStop() }}
+                title="Stop this tool"
+                aria-label="Stop this tool"
+              >
+                <Square size={12} fill="currentColor" />
+              </button>
             )}
             <button
               className={styles.copyButton}

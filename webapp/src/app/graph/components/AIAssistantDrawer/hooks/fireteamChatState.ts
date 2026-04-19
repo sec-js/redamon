@@ -101,6 +101,8 @@ export function handleFireteamDeployed(
       planWaves: [],
       iterations_used: 0,
       tokens_used: 0,
+      input_tokens_used: 0,
+      output_tokens_used: 0,
       findings_count: 0,
       max_iterations: m.max_iterations,
     })),
@@ -136,11 +138,16 @@ export function handleFireteamThinking(
   // the live iteration number so the member card can show "iter 3" while
   // it's still running (iterations_used only lands at member_completed).
   const snippet = (p.thought || p.reasoning || '').slice(0, 240)
+  const inDelta = Math.max(0, Number(p.input_tokens || 0))
+  const outDelta = Math.max(0, Number(p.output_tokens || 0))
   return withFireteam(items, idx, ft =>
     updateMember(ft, p.member_id, m => ({
       ...m,
       latest_thought: snippet,
       latest_iteration: p.iteration,
+      input_tokens_used: (m.input_tokens_used ?? 0) + inDelta,
+      output_tokens_used: (m.output_tokens_used ?? 0) + outDelta,
+      tokens_used: (m.tokens_used ?? 0) + inDelta + outDelta,
     })),
   )
 }
@@ -392,16 +399,29 @@ export function handleFireteamMemberCompleted(
   const idx = findOpenFireteamIndex(items, p.fireteam_id)
   if (idx < 0) return items
   return withFireteam(items, idx, ft =>
-    updateMember(ft, p.member_id, m => ({
-      ...m,
-      status: p.status,
-      completed_at: new Date(),
-      iterations_used: p.iterations_used,
-      tokens_used: p.tokens_used,
-      findings_count: p.findings_count,
-      completion_reason: undefined,
-      error_message: p.error_message ?? undefined,
-    })),
+    updateMember(ft, p.member_id, m => {
+      const authIn = Math.max(0, Number(p.input_tokens_used ?? 0))
+      const authOut = Math.max(0, Number(p.output_tokens_used ?? 0))
+      const authTotal = Math.max(0, Number(p.tokens_used ?? 0))
+      // Prefer the authoritative backend totals if non-zero; fall back to the
+      // per-turn accumulation we maintained via FIRETEAM_THINKING events.
+      const finalIn = authIn > 0 ? authIn : (m.input_tokens_used ?? 0)
+      const finalOut = authOut > 0 ? authOut : (m.output_tokens_used ?? 0)
+      const finalTotal =
+        authTotal > 0 ? authTotal : finalIn + finalOut || (m.tokens_used ?? 0)
+      return {
+        ...m,
+        status: p.status,
+        completed_at: new Date(),
+        iterations_used: p.iterations_used,
+        tokens_used: finalTotal,
+        input_tokens_used: finalIn,
+        output_tokens_used: finalOut,
+        findings_count: p.findings_count,
+        completion_reason: undefined,
+        error_message: p.error_message ?? undefined,
+      }
+    }),
   )
 }
 

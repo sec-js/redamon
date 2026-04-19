@@ -1,10 +1,11 @@
 'use client'
 
-import React from 'react'
+import React, { useMemo } from 'react'
 import { Bot, Wifi, WifiOff, Loader2, AlertTriangle, Eye, EyeOff, History, Plus, Download } from 'lucide-react'
 import { ConnectionStatus } from '@/lib/websocket-types'
 import { Tooltip } from '@/components/ui/Tooltip/Tooltip'
 import { ConversationHistory } from './ConversationHistory'
+import { formatTokenCount } from '@/lib/formatTokens'
 import type { Conversation } from '@/hooks/useConversations'
 import type { ChatItem } from './types'
 import styles from './AIAssistantDrawer.module.css'
@@ -72,6 +73,28 @@ export function DrawerHeader({
     }
   }
 
+  // Sum LLM tokens across every root think + every fireteam member. Root
+  // ThinkingItems carry per-turn deltas; fireteam members track cumulative
+  // totals on the panel. Summing both gives the session-wide total.
+  const { totalInput, totalOutput } = useMemo(() => {
+    let inTot = 0
+    let outTot = 0
+    for (const item of chatItems) {
+      if (!('type' in item)) continue
+      if (item.type === 'thinking') {
+        inTot += item.input_tokens ?? 0
+        outTot += item.output_tokens ?? 0
+      } else if (item.type === 'fireteam') {
+        for (const m of item.members) {
+          inTot += m.input_tokens_used ?? 0
+          outTot += m.output_tokens_used ?? 0
+        }
+      }
+    }
+    return { totalInput: inTot, totalOutput: outTot }
+  }, [chatItems])
+  const hasTokenTotal = totalInput > 0 || totalOutput > 0
+
   return (
     <>
       <div className={styles.header}>
@@ -89,6 +112,13 @@ export function DrawerHeader({
               <span className={styles.sessionCode} title={sessionId}>
                 Session: {sessionId.slice(-8)}
               </span>
+              {hasTokenTotal && (
+                <Tooltip content={`Session LLM usage · input ${totalInput.toLocaleString()} · output ${totalOutput.toLocaleString()}`}>
+                  <span className={styles.tokenTotal}>
+                    in {formatTokenCount(totalInput)} · out {formatTokenCount(totalOutput)}
+                  </span>
+                </Tooltip>
+              )}
               {!requireToolConfirmation && (
                 <Tooltip content="Tool confirmation is disabled. Dangerous tools will execute without manual approval.">
                   <div className={styles.dangerBadge}>

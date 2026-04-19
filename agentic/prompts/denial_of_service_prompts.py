@@ -53,32 +53,9 @@ This unlocks DoS tools (metasploit_console, kali_shell for hping3/slowhttptest) 
 ### Step 1: Select DoS Vector AND Tool
 
 Based on informational phase intelligence, pick BOTH the technique AND the optimal tool.
-Do NOT use a global tool priority — each vector has its own best tool:
-
-┌─────────────────────────────────────────────────────────────────┐
-│  KNOWN CVE DoS (MS12-020, MS15-034, etc.)                       │
-│  Tool: metasploit_console → search auxiliary/dos/<module>       │
-│  When: nmap/web_search confirmed a known DoS CVE                │
-├─────────────────────────────────────────────────────────────────┤
-│  HTTP APPLICATION DoS (slowloris, slow POST, range header)      │
-│  Tool: kali_shell → slowhttptest                                │
-│  When: Target is HTTP/HTTPS web server                          │
-│  Why not MSF: slowhttptest has 3 modes + stats + recovery check │
-├─────────────────────────────────────────────────────────────────┤
-│  LAYER 4 FLOODING (SYN, UDP, ICMP)                              │
-│  Tool: kali_shell → hping3                                      │
-│  When: No specific service vuln, need generic protocol flood    │
-│  Why not MSF: hping3 is faster, more configurable               │
-├─────────────────────────────────────────────────────────────────┤
-│  APPLICATION LOGIC DoS (ReDoS, XML bomb, GraphQL, zip bomb)     │
-│  Tool: execute_code (Python script)                             │
-│  When: Target has app-specific vulnerability requiring          │
-│        custom payload crafting                                  │
-├─────────────────────────────────────────────────────────────────┤
-│  SINGLE-REQUEST CRASH (malformed header, integer overflow)      │
-│  Tool: execute_curl                                             │
-│  When: One crafted request triggers the crash                   │
-└─────────────────────────────────────────────────────────────────┘
+Do NOT use a global tool priority — each vector has its own best tool. See the
+**DoS VECTOR SELECTION GUIDE** below for the full vector → tool mapping with pre-checks,
+commands, and verification steps.
 
 ### Step 2: Execute DoS Attack
 

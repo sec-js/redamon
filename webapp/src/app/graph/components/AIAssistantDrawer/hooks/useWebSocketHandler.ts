@@ -127,6 +127,8 @@ export function useWebSocketHandler(deps: WebSocketHandlerDeps) {
           reasoning: message.payload.reasoning || '',
           action: 'thinking',
           updated_todo_list: todoListRef.current,
+          input_tokens: Math.max(0, Number(message.payload.input_tokens || 0)),
+          output_tokens: Math.max(0, Number(message.payload.output_tokens || 0)),
         }
         setChatItems(prev => [...prev, thinkingItem])
         if (!awaitingToolConfirmationRef.current && !awaitingApprovalRef.current && !awaitingQuestionRef.current) {

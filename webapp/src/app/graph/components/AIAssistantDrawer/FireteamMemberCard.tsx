@@ -15,6 +15,7 @@ import {
 import styles from './FireteamMemberCard.module.css'
 import { ToolExecutionCard } from './ToolExecutionCard'
 import { PlanWaveCard } from './PlanWaveCard'
+import { formatTokenCount } from '@/lib/formatTokens'
 import type { FireteamMemberPanel } from './types'
 
 interface FireteamMemberCardProps {
@@ -23,6 +24,8 @@ interface FireteamMemberCardProps {
   onAddApiKey?: (toolId: string) => void
   onToolConfirmation?: (itemId: string, decision: 'approve' | 'reject') => void
   toolConfirmationDisabled?: boolean
+  /** Cancel a single running tool inside this member's tool list or nested plan waves. */
+  onToolStop?: (itemId: string) => void
 }
 
 function statusIcon(status: FireteamMemberPanel['status']) {
@@ -46,7 +49,7 @@ function statusIcon(status: FireteamMemberPanel['status']) {
   }
 }
 
-export function FireteamMemberCard({ member, missingApiKeys, onAddApiKey, onToolConfirmation, toolConfirmationDisabled }: FireteamMemberCardProps) {
+export function FireteamMemberCard({ member, missingApiKeys, onAddApiKey, onToolConfirmation, toolConfirmationDisabled, onToolStop }: FireteamMemberCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set())
   const [collapsedWaves, setCollapsedWaves] = useState<Set<string>>(new Set())
@@ -92,7 +95,11 @@ export function FireteamMemberCard({ member, missingApiKeys, onAddApiKey, onTool
         <span className={styles.status}>{member.status}</span>
         <span className={styles.meta}>
           {subStep > 0 && <>{subStepLabel} · </>}
-          {member.tokens_used > 0 && <>{member.tokens_used} tok · </>}
+          {(member.input_tokens_used > 0 || member.output_tokens_used > 0) ? (
+            <>in {formatTokenCount(member.input_tokens_used)} · out {formatTokenCount(member.output_tokens_used)} · </>
+          ) : member.tokens_used > 0 ? (
+            <>{formatTokenCount(member.tokens_used)} tok · </>
+          ) : null}
           {toolCount} tools
           {member.findings_count > 0 && <> · {member.findings_count} findings</>}
         </span>
@@ -138,6 +145,7 @@ export function FireteamMemberCard({ member, missingApiKeys, onAddApiKey, onTool
                       : undefined
                   }
                   confirmationDisabled={toolConfirmationDisabled}
+                  onToolStop={onToolStop}
                 />
               ))}
             </div>
@@ -152,6 +160,7 @@ export function FireteamMemberCard({ member, missingApiKeys, onAddApiKey, onTool
                   onToggleExpand={() => toggleToolExpand(t.id)}
                   missingApiKey={missingApiKeys?.has(t.tool_name) ?? false}
                   onAddApiKey={onAddApiKey ? () => onAddApiKey(t.tool_name) : undefined}
+                  onStop={onToolStop ? () => onToolStop(t.id) : undefined}
                 />
               ))}
             </div>

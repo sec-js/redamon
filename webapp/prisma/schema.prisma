@@ -521,8 +521,9 @@ model Project {
   fireteamMaxConcurrent                 Int      @default(5)               @map("fireteam_max_concurrent")
   fireteamMaxMembers                    Int      @default(5)               @map("fireteam_max_members")
   fireteamMemberMaxIterations           Int      @default(20)              @map("fireteam_member_max_iterations")
-  fireteamTimeoutSec                    Int      @default(1800)            @map("fireteam_timeout_sec")
+  fireteamTimeoutSec                    Int      @default(3600)            @map("fireteam_timeout_sec")
   fireteamAllowedPhases                 String[] @default(["informational", "exploitation", "post_exploitation"]) @map("fireteam_allowed_phases")
+  fireteamConfirmationTimeoutSec        Int      @default(600)             @map("fireteam_confirmation_timeout_sec")
 
   // Hydra Brute Force Settings
   hydraEnabled                          Boolean  @default(true) @map("hydra_enabled")

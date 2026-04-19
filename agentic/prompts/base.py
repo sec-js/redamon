@@ -71,21 +71,48 @@ def build_tool_args_section(allowed_tools):
     return "\n".join(lines)
 
 
-_FIRETEAM_EXAMPLE_BLOCK = """deploy_fireteam (Fireteam: launch 2-8 specialist sub-agents in parallel on INDEPENDENT subtasks):
+_FIRETEAM_PROMPT_BLOCK = """deploy_fireteam (2 to {max_members} specialists, fork-join on INDEPENDENT subtasks).
+
+Fireteam = parallel REASONING (each specialist runs its own ReAct loop), not just parallel tool calls (that's plan_tools). Works in all phases.
+
+Use when ALL hold:
+1. Task splits into ≥2 subtasks; each needs ≥3 tool calls to do well.
+2. Independent: no shared session/credential/meterpreter context/tmp file/singleton tool.
+3. Sequential execution would take noticeable wall-clock.
+4. No prior wave covered the same scope (check `(from <specialist>)` tags on findings in chain context).
+
+Don't use when:
+- One target/endpoint/session, subtasks share state, ≤2 tool calls total, or a subtask would itself need to fan out (members can't sub-fork).
+- A previous wave already ran this plan → emit action=complete instead.
+
+Escalation (cheapest first): use_tool → plan_tools → deploy_fireteam.
+- plan_tools: you already know which N tools to call; ONE LLM call analyzes all outputs together. Cheap, shared context. Use when work = "fire these N commands and I'll interpret the combined result."
+  EXAMPLES: `execute_nmap -sV 10.0.0.5` + `execute_httpx https://target` + `execute_subfinder -d target.com` in parallel (you read all three outputs yourself). Or `execute_curl /api/users` + `execute_curl /api/orders` + `execute_curl /api/admin` to check status codes on known endpoints.
+- deploy_fireteam: N sub-agents reason independently, each picking their own tools across multiple iterations based on what they find. Expensive, deeper. Use when each subtask needs its OWN think-act-observe cycle.
+  EXAMPLES: "map auth surface" (specialist renders page → inspects cookies → probes /api/auth endpoints → reports) + "map API surface" (specialist fuzzes /api → enumerates params on discoveries → probes nested paths) — each needs 3+ iterations and chooses its next tool from the last output.
+
+Phase patterns:
+- Informational: different surfaces of one target (auth / API / JS), or same technique across N targets. Skip if each surface fits in ≤2 tools.
+- Exploitation: independent vuln classes on a mapped surface (SQLi / SSRF / auth-bypass). NOT a single multi-step exploit chain (sequential), NOT two members with `metasploit` skill (msfconsole singleton race — validator rejects).
+- Post-exploitation: parallel research/planning tracks only. Multi-session msfconsole interaction is serialized through the singleton — do it yourself.
+
+Hard limits: max {max_members} members per wave, dangerous tools escalate to operator, do NOT specify iteration counts.
+
+After a wave returns: findings show `(from <specialist>)` and matching TODOs auto-complete. DO NOT redeploy the same plan. Either emit action=complete with a consolidated report, OR deploy a DIFFERENT plan if findings reveal a genuinely new surface. If user asked "deploy a fireteam to do X" and it did, the task is done.
+
+Example (exploitation fan-out against a mapped surface):
 ```json
-{{"action": "deploy_fireteam", "fireteam_plan": {{"members": [{{"name": "Web Tester", "task": "Probe HTTP on 10.0.0.1:80 for SQLi, XSS, IDOR. Use nuclei first.", "skills": ["sql_injection", "xss"]}}, {{"name": "SSH Analyst", "task": "Identify SSH version and known CVEs on 10.0.0.1:22. No brute force in informational phase.", "skills": []}}], "plan_rationale": "Two independent services, specialist-level testing per surface"}}, ...}}
+{{"action": "deploy_fireteam", "fireteam_plan": {{"members": [
+  {{"name": "SQLi Operator", "task": "Exploit SQLi on /api/users?id= via UNION/blind; extract users table.", "skills": ["sqlmap", "curl"]}},
+  {{"name": "SSRF Operator", "task": "Exploit SSRF on /api/fetch?url= to cloud metadata and internal services.", "skills": ["curl", "nuclei"]}},
+  {{"name": "Auth Bypass", "task": "Test /admin for JWT alg-confusion, missing sig checks, and IDOR.", "skills": ["curl"]}}
+], "plan_rationale": "Three independent vuln classes, no cross-dependency, no shared session"}}, ...}}
 ```
-When to choose deploy_fireteam vs plan_tools:
-- plan_tools: you know exactly which N tools to call and will interpret results yourself.
-- deploy_fireteam: you want N sub-agents to REASON independently about their own subproblem and return findings.
-Rule of thumb: if you would prompt yourself N times with "test service X", use deploy_fireteam. If you would fire N specific tool commands, use plan_tools.
-Each fireteam member runs its own ReAct loop and decides when to emit `action=complete`. Do NOT specify iteration counts — the member stops when its work is done; a global operator-set safety cap applies.
-Hard limits: maximum 8 members per fireteam; dangerous tools from members always escalate to you for approval.
 
 """
 
 
-def build_fireteam_prompt_fragments(enabled: bool, phase: str, allowed_phases):
+def build_fireteam_prompt_fragments(enabled: bool, phase: str, allowed_phases, max_members: int = 5):
     """Return (action_enum_fragment, plan_field_fragment, example_section).
 
     When enabled AND current phase is in allowed_phases, the fragments inject
@@ -93,13 +120,20 @@ def build_fireteam_prompt_fragments(enabled: bool, phase: str, allowed_phases):
     strings, saving ~500 tokens per LLM call on sessions where Fireteam
     cannot run anyway. The think_node gate is still defensive — the LLM
     won't even see the action listed when gates are closed.
+
+    ``max_members`` is threaded from project setting ``FIRETEAM_MAX_MEMBERS``
+    (default 5) into the prompt text so the LLM sees the actual per-project cap
+    rather than a hardcoded number. The Pydantic ``FireteamPlan`` model still
+    enforces an absolute upper bound (8) at parse time as a safety net.
     """
     gate_open = bool(enabled) and phase in (allowed_phases or [])
     if not gate_open:
         return ("", "", "")
     action_enum = "deploy_fireteam, "
     plan_field = '\n    "fireteam_plan": "<only if action=deploy_fireteam: see deploy_fireteam example below>",'
-    example = _FIRETEAM_EXAMPLE_BLOCK
+    # Use safe .format — no other curly-brace placeholders besides JSON literals
+    # which are pre-escaped as {{ / }} in the template source.
+    example = _FIRETEAM_PROMPT_BLOCK.format(max_members=int(max_members))
     return (action_enum, plan_field, example)
 
 
@@ -381,37 +415,13 @@ def build_informational_guidance(phase):
     if phase != "informational":
         return ""
 
-    return """## Intent Detection (CRITICAL)
+    return """## Intent Detection + Graph-First (informational phase)
 
-Analyze the user's request to understand their intent:
+Classify the user request by intent, then act:
 
-**Exploitation Intent** - Keywords: "exploit", "attack", "pwn", "hack", "run exploit", "use metasploit", "deface", "test vulnerability"
-- If the user explicitly asks to EXPLOIT a CVE/vulnerability:
-  1. Make ONE query to get the target info (IP, port, service) for that CVE from the graph
-  2. Request phase transition to exploitation
-  3. **Once in exploitation phase, follow the MANDATORY EXPLOITATION WORKFLOW (see EXPLOITATION_TOOLS section)**
-- **IMPORTANT:** For full exploitation, go directly to exploitation phase — but lightweight curl probing is allowed if graph lacks vuln data
-
-**Payload / Handler Intent** - Keywords: "generate", "payload", "reverse shell", "msfvenom", "handler", "listener", "one-liner", "backdoor", "malicious document"
-- If the user asks to GENERATE a payload, set up a handler/listener, or create a reverse shell:
-  1. Request phase transition to exploitation IMMEDIATELY
-  2. Do NOT attempt to generate payloads or set up listeners in informational phase
-  3. **NEVER use `nc`, `ncat`, `netcat`, or `socat` as a listener — even for plain shell payloads**
-  4. Only Metasploit `exploit/multi/handler` (via `metasploit_console`) creates tracked sessions visible in the RedAmon UI
-  5. Using `kali_shell` with msfvenom to generate a payload is acceptable, but the HANDLER must always use `metasploit_console`
-
-**Research Intent** - Keywords: "find", "show", "what", "list", "scan", "discover", "enumerate"
-- If the user wants information/recon, use the graph-first approach below
-- Query the graph for vulnerabilities first — if graph has no data, use execute_nuclei to scan for vulns
-
-## Graph-First Approach (for Research)
-
-For RESEARCH requests, use Neo4j as the primary source:
-1. Query the graph database FIRST for any information need (IPs, ports, services, **vulnerabilities**, CVEs)
-2. Use execute_curl for reachability checks ONLY (basic HTTP status, headers)
-3. Use execute_naabu ONLY to verify ports are open or scan NEW targets not in graph
-4. If the graph has NO vulnerability data, use execute_nuclei to scan for CVEs and vulnerabilities
-5. If the graph ALREADY HAS vulnerability data, do NOT duplicate testing
+- **Exploitation intent** ("exploit", "pwn", "run exploit", "use metasploit", "test vulnerability"): query the graph ONCE for target info (IP/port/service/CVE), then request `transition_phase` to exploitation. Full exploitation belongs in the exploitation phase; lightweight curl probing is OK in info if the graph lacks vuln data.
+- **Payload/handler intent** ("generate", "payload", "reverse shell", "msfvenom", "handler", "listener", "one-liner", "backdoor"): request `transition_phase` to exploitation immediately. Do NOT generate payloads or start listeners from informational. The handler MUST be `exploit/multi/handler` via `metasploit_console` (only MSF sessions appear in the RedAmon UI). msfvenom generation via `kali_shell` is fine.
+- **Research intent** ("find", "show", "list", "scan", "discover", "enumerate"): query the graph FIRST for anything you need (IPs, ports, services, vulnerabilities, CVEs). Use `execute_curl` only for reachability checks, `execute_naabu` only to verify or scan targets not in the graph, `execute_nuclei` only if the graph has no vuln data. Never re-test what the graph already shows.
 """
 
 

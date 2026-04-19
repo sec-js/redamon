@@ -71,6 +71,7 @@ interface SendHandlersDeps {
   sendAnswer: (answer: string) => void
   sendStop: () => void
   sendResume: () => void
+  sendToolStop: (tool_name: string, wave_id?: string, step_index?: number) => void
   // Conversation
   conversationId: string | null
   setConversationId: (v: string | null) => void
@@ -96,7 +97,7 @@ export function useSendHandlers(deps: SendHandlersDeps) {
     isProcessingQuestion, awaitingQuestionRef,
     isProcessingToolConfirmation, awaitingToolConfirmationRef,
     pendingApprovalToolId, pendingApprovalWaveId,
-    sendQuery, sendGuidance, sendSkillInject, sendApproval, sendToolConfirmation, sendFireteamMemberConfirmation, sendAnswer, sendStop, sendResume,
+    sendQuery, sendGuidance, sendSkillInject, sendApproval, sendToolConfirmation, sendFireteamMemberConfirmation, sendAnswer, sendStop, sendResume, sendToolStop,
     conversationId, setConversationId, projectId, userId, sessionId,
     createConversation, saveMessage, updateConvMeta,
   } = deps
@@ -599,6 +600,116 @@ export function useSendHandlers(deps: SendHandlersDeps) {
     sendStop()
   }, [sendStop, setIsStopping])
 
+  // Stop a single running tool card without aborting the whole agent run.
+  // Locates the tool by item.id (top-level, inside a plan wave, or inside a
+  // fireteam member panel), sends TOOL_STOP with the tool's identifiers,
+  // and optimistically marks the card as failed. The backend cancels just
+  // that tool task; agent flow continues normally to the next tool.
+  const handleToolStop = useCallback((itemId: string) => {
+    let toolName: string | null = null
+    let waveId: string | undefined
+    let stepIndex: number | undefined
+
+    outer:
+    for (const it of chatItems) {
+      if (!('type' in it)) continue
+      if (it.type === 'tool_execution' && it.id === itemId) {
+        toolName = it.tool_name
+        stepIndex = it.step_index
+        break
+      }
+      if (it.type === 'plan_wave') {
+        const wave = it as PlanWaveItem
+        const tool = wave.tools.find(t => t.id === itemId)
+        if (tool) {
+          toolName = tool.tool_name
+          waveId = wave.wave_id
+          stepIndex = tool.step_index
+          break
+        }
+      }
+      if (it.type === 'fireteam') {
+        const ft = it as FireteamItem
+        for (const member of ft.members) {
+          const flat = member.tools.find(t => t.id === itemId)
+          if (flat) {
+            toolName = flat.tool_name
+            stepIndex = flat.step_index
+            break outer
+          }
+          for (const pw of member.planWaves) {
+            const nested = pw.tools.find(t => t.id === itemId)
+            if (nested) {
+              toolName = nested.tool_name
+              waveId = pw.wave_id
+              stepIndex = nested.step_index
+              break outer
+            }
+          }
+        }
+      }
+    }
+
+    if (!toolName) return
+
+    try {
+      sendToolStop(toolName, waveId, stepIndex)
+    } catch {
+      // fall through — still mark card failed locally
+    }
+
+    // Optimistic UI update: mark the stopped tool as failed immediately
+    // so the Stop button disappears and the card turns red. We only flip
+    // the status when the tool is STILL running in the latest state —
+    // otherwise a tool_complete race (user clicks Stop just as the tool
+    // finishes successfully) would silently overwrite the real result.
+    setChatItems((prev: ChatItem[]) => prev.map((item: ChatItem) => {
+      if (!('type' in item)) return item
+      if (item.type === 'tool_execution' && item.id === itemId) {
+        if (item.status !== 'running') return item
+        return { ...item, status: 'error' as const, final_output: 'Stopped by user' }
+      }
+      if (item.type === 'plan_wave') {
+        const wave = item as PlanWaveItem
+        const idx = wave.tools.findIndex(t => t.id === itemId)
+        if (idx === -1) return item
+        if (wave.tools[idx].status !== 'running') return item
+        const updatedTools = [...wave.tools]
+        updatedTools[idx] = { ...updatedTools[idx], status: 'error' as const, final_output: 'Stopped by user' }
+        return { ...wave, tools: updatedTools }
+      }
+      if (item.type === 'fireteam') {
+        const ft = item as FireteamItem
+        let changed = false
+        const nextMembers = ft.members.map(member => {
+          const flatIdx = member.tools.findIndex(t => t.id === itemId)
+          if (flatIdx !== -1) {
+            if (member.tools[flatIdx].status !== 'running') return member
+            changed = true
+            const updatedTools = [...member.tools]
+            updatedTools[flatIdx] = { ...updatedTools[flatIdx], status: 'error' as const, final_output: 'Stopped by user' }
+            return { ...member, tools: updatedTools }
+          }
+          const pwIdx = member.planWaves.findIndex(pw => pw.tools.some(t => t.id === itemId))
+          if (pwIdx !== -1) {
+            const wave = member.planWaves[pwIdx]
+            const tIdx = wave.tools.findIndex(t => t.id === itemId)
+            if (wave.tools[tIdx].status !== 'running') return member
+            changed = true
+            const updatedTools = [...wave.tools]
+            updatedTools[tIdx] = { ...updatedTools[tIdx], status: 'error' as const, final_output: 'Stopped by user' }
+            const updatedWaves = [...member.planWaves]
+            updatedWaves[pwIdx] = { ...wave, tools: updatedTools }
+            return { ...member, planWaves: updatedWaves }
+          }
+          return member
+        })
+        return changed ? { ...ft, members: nextMembers } : item
+      }
+      return item
+    }))
+  }, [chatItems, sendToolStop, setChatItems])
+
   const handleResume = useCallback(() => {
     sendResume()
     setIsStopped(false)
@@ -639,6 +750,7 @@ export function useSendHandlers(deps: SendHandlersDeps) {
     handleAnswer,
     handleStop,
     handleResume,
+    handleToolStop,
     handleKeyDown,
     handleInputChange,
     activateSkill,

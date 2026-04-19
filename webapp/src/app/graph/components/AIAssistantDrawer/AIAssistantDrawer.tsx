@@ -229,7 +229,7 @@ export function AIAssistantDrawer({
     status, isConnected, reconnectAttempt,
     sendQuery, sendGuidance, sendApproval, sendToolConfirmation,
     sendFireteamMemberConfirmation,
-    sendAnswer, sendSkillInject, sendStop, sendResume,
+    sendAnswer, sendSkillInject, sendStop, sendResume, sendToolStop,
   } = useAgentWebSocket({
     userId,
     projectId,
@@ -248,6 +248,7 @@ export function AIAssistantDrawer({
     handleAnswer,
     handleStop,
     handleResume,
+    handleToolStop,
     handleKeyDown,
     handleInputChange,
     activateSkill,
@@ -265,7 +266,7 @@ export function AIAssistantDrawer({
     isProcessingQuestion, awaitingQuestionRef,
     isProcessingToolConfirmation, awaitingToolConfirmationRef,
     pendingApprovalToolId, pendingApprovalWaveId,
-    sendQuery, sendGuidance, sendSkillInject, sendApproval, sendToolConfirmation, sendFireteamMemberConfirmation, sendAnswer, sendStop, sendResume,
+    sendQuery, sendGuidance, sendSkillInject, sendApproval, sendToolConfirmation, sendFireteamMemberConfirmation, sendAnswer, sendStop, sendResume, sendToolStop,
     conversationId, setConversationId, projectId, userId, sessionId,
     createConversation, saveMessage, updateConvMeta,
   })
@@ -388,6 +389,7 @@ export function AIAssistantDrawer({
         missingApiKeys={missingApiKeys}
         openApiKeyModal={openApiKeyModal}
         handleTimelineToolConfirmation={handleTimelineToolConfirmation}
+        handleToolStop={handleToolStop}
       />
 
       <ApprovalDialog

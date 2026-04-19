@@ -299,5 +299,64 @@ class MemberTokenAccountingRegression(unittest.IsolatedAsyncioTestCase):
                          f"empty={delta_empty}, long={delta_long}")
 
 
+# =============================================================================
+# BUG 5: step_iteration silently dropped by ChainFindingExtract Pydantic model.
+# =============================================================================
+#
+# fireteam_member_think_node tags each finding dict with ``step_iteration`` so
+# the parent's format_chain_context renders "(step N)" instead of "(step ?)".
+# But _result_from_final_state rebuilds those dicts into ChainFindingExtract
+# objects, and pre-fix the model did not declare step_iteration — Pydantic's
+# extra-ignore silently dropped the key. Result: fireteam-sourced findings in
+# the parent's chain_findings_memory rolled up with no step tag, rendered as
+# "(step ?)" in every subsequent root think prompt.
+
+class FindingStepIterationPreservedRegression(unittest.TestCase):
+    def test_step_iteration_survives_roundtrip(self):
+        from orchestrator_helpers.nodes.fireteam_deploy_node import _result_from_final_state
+
+        final_state = {
+            "current_iteration": 3,
+            "tokens_used": 1000,
+            "input_tokens_used": 700,
+            "output_tokens_used": 300,
+            "task_complete": True,
+            "completion_reason": "complete",
+            "target_info": {},
+            "chain_findings_memory": [
+                {
+                    "finding_type": "vulnerability_confirmed",
+                    "severity": "high",
+                    "title": "SSRF in /api/render",
+                    "evidence": "200 OK with external host body",
+                    "confidence": 95,
+                    "step_iteration": 2,
+                },
+                {
+                    "finding_type": "configuration_found",
+                    "severity": "info",
+                    "title": "nginx version disclosure",
+                    "evidence": "Server: nginx/1.18",
+                    "confidence": 100,
+                    "step_iteration": 1,
+                },
+            ],
+            "execution_trace": [],
+        }
+        spec = {"name": "API Fuzzer", "task": "t", "skills": ["ffuf"], "max_iterations": 10}
+
+        result = _result_from_final_state(final_state, spec, "member-0-abc", 12.3)
+        findings = result.get("findings") or []
+        self.assertEqual(len(findings), 2)
+        # Pre-fix: both entries had no step_iteration (Pydantic dropped it).
+        # Post-fix: both round-trip intact.
+        self.assertEqual(findings[0].get("step_iteration"), 2)
+        self.assertEqual(findings[1].get("step_iteration"), 1)
+
+    def test_model_declares_step_iteration_field(self):
+        from state import ChainFindingExtract
+        self.assertIn("step_iteration", ChainFindingExtract.model_fields)
+
+
 if __name__ == "__main__":
     unittest.main()

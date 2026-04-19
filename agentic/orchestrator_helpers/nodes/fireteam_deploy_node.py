@@ -136,6 +136,10 @@ def _build_member_state(
 
         # Passive observability accumulator — no cap, just tracked for metrics.
         "tokens_used": 0,
+        "input_tokens_used": 0,
+        "output_tokens_used": 0,
+        "_input_tokens_this_turn": 0,
+        "_output_tokens_this_turn": 0,
 
         # Internal
         "_decision": None,
@@ -226,6 +230,7 @@ def _result_from_final_state(final_state: dict, spec: dict, member_id: str, wall
                     related_cves=f.get("related_cves") or [],
                     related_ips=f.get("related_ips") or [],
                     confidence=f.get("confidence", 80),
+                    step_iteration=int(f.get("step_iteration") or 0),
                 ))
     except Exception as e:
         logger.debug("findings conversion skipped: %s", e)
@@ -237,6 +242,8 @@ def _result_from_final_state(final_state: dict, spec: dict, member_id: str, wall
         completion_reason=completion_reason,
         iterations_used=int(final_state.get("current_iteration") or 0),
         tokens_used=int(final_state.get("tokens_used") or 0),
+        input_tokens_used=int(final_state.get("input_tokens_used") or 0),
+        output_tokens_used=int(final_state.get("output_tokens_used") or 0),
         wall_clock_seconds=round(wall_s, 3),
         findings=findings,
         target_info_delta=delta,
@@ -556,6 +563,8 @@ async def fireteam_deploy_node(
                         status=result["status"],
                         iterations_used=result.get("iterations_used", 0),
                         tokens_used=result.get("tokens_used", 0),
+                        input_tokens_used=result.get("input_tokens_used", 0),
+                        output_tokens_used=result.get("output_tokens_used", 0),
                         findings_count=len(result.get("findings") or []),
                         wall_clock_seconds=result.get("wall_clock_seconds", 0.0),
                         error_message=result.get("error_message"),
@@ -619,6 +628,23 @@ async def fireteam_deploy_node(
         for m, mid in zip(members, member_ids):
             results.append(_cancelled_result(m, mid, time.monotonic() - wave_start))
         wall = time.monotonic() - wave_start
+        # Persist per-member cancellation to Postgres BEFORE the wave-level
+        # patch. Without this, on session restore (or switch-and-return) the
+        # /fireteams API returns each member with its original `running`
+        # status — so the UI rebuild shows specialists "still running" even
+        # though their tasks died minutes ago. The live WS events flip the
+        # UI on cancel, but the DB source-of-truth needs updating too.
+        for r, m, mid in zip(results, members, member_ids):
+            await _patch_member(session_id, fireteam_id_key, mid, {
+                "status": r.get("status", "cancelled"),
+                "completionReason": r.get("completion_reason") or "wave_cancelled",
+                "iterationsUsed": r.get("iterations_used", 0),
+                "tokensUsed": r.get("tokens_used", 0),
+                "findingsCount": len(r.get("findings") or []),
+                "wallClockSeconds": r.get("wall_clock_seconds", 0.0),
+                "errorMessage": r.get("error_message"),
+                "resultBlob": r,
+            })
         await _patch_fireteam(session_id, fireteam_id_key, {
             "status": "cancelled",
             "statusCounts": _count_statuses(results),
@@ -639,6 +665,8 @@ async def fireteam_deploy_node(
                         status=r.get("status", "cancelled"),
                         iterations_used=r.get("iterations_used", 0),
                         tokens_used=r.get("tokens_used", 0),
+                        input_tokens_used=r.get("input_tokens_used", 0),
+                        output_tokens_used=r.get("output_tokens_used", 0),
                         findings_count=len(r.get("findings") or []),
                         wall_clock_seconds=r.get("wall_clock_seconds", 0.0),
                         error_message=r.get("error_message"),

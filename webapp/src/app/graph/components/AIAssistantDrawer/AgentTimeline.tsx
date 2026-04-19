@@ -28,6 +28,8 @@ export interface ThinkingItem {
   phase_transition?: Record<string, unknown>
   user_question?: Record<string, unknown>
   updated_todo_list: TodoItem[]
+  input_tokens?: number
+  output_tokens?: number
 }
 
 export interface ToolExecutionItem {
@@ -102,6 +104,8 @@ export interface FireteamMemberPanel {
   planWaves: PlanWaveItem[]
   iterations_used: number
   tokens_used: number
+  input_tokens_used: number
+  output_tokens_used: number
   findings_count: number
   completion_reason?: string
   error_message?: string
@@ -148,9 +152,11 @@ export interface AgentTimelineProps {
   onAddApiKey?: (toolId: string) => void
   onToolConfirmation?: (itemId: string, decision: 'approve' | 'reject') => void
   toolConfirmationDisabled?: boolean
+  /** Cancel a single running tool card. Receives the tool's item.id. */
+  onToolStop?: (itemId: string) => void
 }
 
-export function AgentTimeline({ items, isStreaming, onItemExpand, missingApiKeys, onAddApiKey, onToolConfirmation, toolConfirmationDisabled }: AgentTimelineProps) {
+export function AgentTimeline({ items, isStreaming, onItemExpand, missingApiKeys, onAddApiKey, onToolConfirmation, toolConfirmationDisabled, onToolStop }: AgentTimelineProps) {
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
 
   const toggleExpand = (itemId: string) => {
@@ -208,6 +214,7 @@ export function AgentTimeline({ items, isStreaming, onItemExpand, missingApiKeys
                 onApprove={item.status === 'pending_approval' ? () => onToolConfirmation?.(item.id, 'approve') : undefined}
                 onReject={item.status === 'pending_approval' ? () => onToolConfirmation?.(item.id, 'reject') : undefined}
                 confirmationDisabled={toolConfirmationDisabled}
+                onToolStop={onToolStop}
               />
             ) : item.type === 'fireteam' ? (
               <FireteamCard
@@ -216,6 +223,7 @@ export function AgentTimeline({ items, isStreaming, onItemExpand, missingApiKeys
                 onAddApiKey={onAddApiKey}
                 onToolConfirmation={onToolConfirmation}
                 toolConfirmationDisabled={toolConfirmationDisabled}
+                onToolStop={onToolStop}
               />
             ) : (
               <ToolExecutionCard
@@ -227,6 +235,7 @@ export function AgentTimeline({ items, isStreaming, onItemExpand, missingApiKeys
                 onApprove={item.status === 'pending_approval' ? () => onToolConfirmation?.(item.id, 'approve') : undefined}
                 onReject={item.status === 'pending_approval' ? () => onToolConfirmation?.(item.id, 'reject') : undefined}
                 confirmationDisabled={toolConfirmationDisabled}
+                onStop={onToolStop ? () => onToolStop(item.id) : undefined}
               />
             )}
           </div>

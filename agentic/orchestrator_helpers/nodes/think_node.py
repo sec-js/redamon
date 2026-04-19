@@ -107,6 +107,10 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
     # ─── Deep Think pre-step (conditional) ────────────────────────────────
     deep_think_result = state.get("deep_think_result")  # existing from prior iterations
     deep_think_triggered = False
+    # Deep-think token deltas — initialized unconditionally so the main
+    # think-loop can seed its tally from them whether deep-think ran or not.
+    _dt_in = 0
+    _dt_out = 0
 
     if get_setting('DEEP_THINK_ENABLED', False):
         trigger_reason = None
@@ -187,6 +191,9 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
                     HumanMessage(content="Produce the deep think analysis JSON now."),
                 ])
                 dt_raw = normalize_content(dt_response.content).strip()
+                _dt_usage = getattr(dt_response, "usage_metadata", None) or {}
+                _dt_in += int(_dt_usage.get("input_tokens", 0) or 0)
+                _dt_out += int(_dt_usage.get("output_tokens", 0) or 0)
                 # Strip markdown code fences if present (LLMs often wrap JSON in ```json ... ```)
                 if dt_raw.startswith("```"):
                     dt_raw = dt_raw.split("\n", 1)[1] if "\n" in dt_raw else dt_raw[3:]
@@ -239,6 +246,7 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
                 and get_setting("PERSISTENT_CHECKPOINTER", False),
         phase=phase,
         allowed_phases=get_setting("FIRETEAM_ALLOWED_PHASES", ["informational"]),
+        max_members=int(get_setting("FIRETEAM_MAX_MEMBERS", 5)),
     )
 
     system_prompt = REACT_SYSTEM_PROMPT.format(
@@ -445,6 +453,8 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
     decision = None
     last_error = None
     response_text = ""
+    input_tokens_this_turn = _dt_in
+    output_tokens_this_turn = _dt_out
 
     for attempt in range(max_retries):
         if attempt > 0:
@@ -457,6 +467,10 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
 
         response = await llm.ainvoke(messages)
         response_text = normalize_content(response.content).strip()
+
+        usage = getattr(response, "usage_metadata", None) or {}
+        input_tokens_this_turn += int(usage.get("input_tokens", 0) or 0)
+        output_tokens_this_turn += int(usage.get("output_tokens", 0) or 0)
 
         logger.info(f"\n{'='*60}")
         logger.info(f"LLM RAW RESPONSE - Iteration {iteration} (attempt {attempt+1}/{max_retries})")
@@ -570,6 +584,11 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
     todo_list = [item.model_dump() for item in decision.updated_todo_list] if decision.updated_todo_list else state.get("todo_list", [])
 
     # Build state updates
+    _prev_input_tokens = int(state.get("input_tokens_used", 0) or 0)
+    _prev_output_tokens = int(state.get("output_tokens_used", 0) or 0)
+    _new_input_tokens = _prev_input_tokens + input_tokens_this_turn
+    _new_output_tokens = _prev_output_tokens + output_tokens_this_turn
+
     updates = {
         "current_iteration": iteration,
         "todo_list": todo_list,
@@ -578,7 +597,18 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
         "_reject_tool": False,  # Clear tool rejection marker from previous iteration
         "_tool_confirmation_mode": None,  # Clear mode from previous confirmation
         "_completed_step": None,  # Will be set if we process pending output
+        "input_tokens_used": _new_input_tokens,
+        "output_tokens_used": _new_output_tokens,
+        "tokens_used": _new_input_tokens + _new_output_tokens,
+        "_input_tokens_this_turn": input_tokens_this_turn,
+        "_output_tokens_this_turn": output_tokens_this_turn,
     }
+
+    logger.info(
+        f"[{user_id}/{project_id}/{session_id}] Tokens this turn: "
+        f"in={input_tokens_this_turn} out={output_tokens_this_turn} "
+        f"(cumulative in={_new_input_tokens} out={_new_output_tokens})"
+    )
 
     # Inject fireteam-gate rejection note so the LLM doesn't just re-emit
     # deploy_fireteam on the next iteration. Use HumanMessage to represent

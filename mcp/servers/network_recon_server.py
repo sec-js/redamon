@@ -905,7 +905,7 @@ def execute_amass(args: str) -> str:
             ["amass"] + cmd_args,
             capture_output=True,
             text=True,
-            timeout=660  # 11 min hard limit (amass default timeout is 10 min)
+            timeout=1800  # 30 min hard limit — passive+active enum on real domains often needs 15-25 min
         )
 
         output = ""
@@ -976,7 +976,7 @@ def execute_katana(args: str) -> str:
             ["katana"] + cmd_args,
             capture_output=True,
             text=True,
-            timeout=600  # 10 min -- crawling can be slow depending on depth/scope
+            timeout=1800  # 30 min -- depth=2 + JS crawling on real sites routinely exceeds 10 min
         )
 
         output = ""
@@ -1051,7 +1051,7 @@ def execute_arjun(args: str) -> str:
             ["arjun"] + cmd_args,
             capture_output=True,
             text=True,
-            timeout=300
+            timeout=1200
         )
 
         output = ""
@@ -1145,7 +1145,7 @@ def execute_ffuf(args: str) -> str:
             ["ffuf"] + cmd_args,
             capture_output=True,
             text=True,
-            timeout=600
+            timeout=1200
         )
 
         output = ""

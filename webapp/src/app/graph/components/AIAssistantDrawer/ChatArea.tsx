@@ -37,6 +37,8 @@ interface ChatAreaProps {
   missingApiKeys: Set<string>
   openApiKeyModal: (toolId: string) => void
   handleTimelineToolConfirmation: (itemId: string, decision: 'approve' | 'reject') => void
+  /** Cancel a single running tool card. Receives the tool's item.id. */
+  handleToolStop?: (itemId: string) => void
 }
 
 export function ChatArea({
@@ -53,6 +55,7 @@ export function ChatArea({
   missingApiKeys,
   openApiKeyModal,
   handleTimelineToolConfirmation,
+  handleToolStop,
 }: ChatAreaProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [copiedFieldKey, setCopiedFieldKey] = useState<string | null>(null)
@@ -261,6 +264,7 @@ export function ChatArea({
                 onAddApiKey={openApiKeyModal}
                 onToolConfirmation={handleTimelineToolConfirmation}
                 toolConfirmationDisabled={isLoading}
+                onToolStop={handleToolStop}
               />
             )
           }

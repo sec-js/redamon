@@ -265,6 +265,12 @@ class ChainFindingExtract(BaseModel):
     related_cves: List[str] = Field(default_factory=list)
     related_ips: List[str] = Field(default_factory=list)
     confidence: int = 80
+    # Member think node stamps this with the producing ReAct iteration so the
+    # parent's format_chain_context renders "(step N)" after fireteam roll-up.
+    # Without this field declared, Pydantic drops the key when the deploy node
+    # rebuilds findings into ChainFindingExtract in _result_from_final_state,
+    # and the parent context shows "(step ?)".
+    step_iteration: int = 0
 
 
 class OutputAnalysisInline(BaseModel):
@@ -356,6 +362,8 @@ class FireteamMemberResult(BaseModel):
     completion_reason: str = ""
     iterations_used: int = 0
     tokens_used: int = 0
+    input_tokens_used: int = 0
+    output_tokens_used: int = 0
     wall_clock_seconds: float = 0.0
     findings: List[ChainFindingExtract] = Field(default_factory=list)
     target_info_delta: dict = Field(default_factory=dict)
@@ -429,8 +437,13 @@ class FireteamMemberState(TypedDict):
 
     # Passive observability — tokens_used accumulates per turn for metrics
     # and report display. No enforcement: iteration budget (max_iterations)
-    # is the sole cap on member runtime.
+    # is the sole cap on member runtime. input/output are broken out from
+    # the provider's usage_metadata; tokens_used = input + output.
     tokens_used: int
+    input_tokens_used: int
+    output_tokens_used: int
+    _input_tokens_this_turn: int
+    _output_tokens_this_turn: int
 
 
 class LLMDecision(BaseModel):
@@ -648,6 +661,21 @@ class AgentState(TypedDict):
 
     # Metasploit state tracking
     msf_session_reset_done: bool  # True if metasploit was reset at start of this session
+
+    # LLM token accounting (cumulative across the session, populated from each
+    # ainvoke's usage_metadata). Used by the UI to render per-step and
+    # cumulative counters. tokens_used = input + output; kept alongside for
+    # backwards-compatible reporting.
+    input_tokens_used: int
+    output_tokens_used: int
+    tokens_used: int
+
+    # Per-turn deltas (reset every think iteration). emit_streaming_events
+    # picks these up when emitting on_thinking so the UI can render per-step
+    # in/out counts. MUST be declared here or LangGraph filters them out of
+    # state updates. See FIRETEAM.md §13.3.
+    _input_tokens_this_turn: int
+    _output_tokens_this_turn: int
 
     # Fireteam (multi-agent) deployment state
     _current_fireteam_plan: Optional[dict]       # FireteamPlan.model_dump()
@@ -1127,7 +1155,12 @@ def format_chain_context(
             step = f.get("step_iteration", "?")
             confidence = f.get("confidence")
             conf_str = f", {confidence}%" if confidence is not None else ""
-            lines.append(f"  [{sev}] {title} (step {step}{conf_str})")
+            # Surface source_agent when present so the LLM can see that a
+            # fireteam already covered this ground. Root-agent findings leave
+            # source_agent unset — no attribution suffix in that case.
+            source_agent = f.get("source_agent")
+            source_str = f", from {source_agent}" if source_agent else ""
+            lines.append(f"  [{sev}] {title} (step {step}{source_str}{conf_str})")
 
             evidence = (f.get("evidence") or "").strip()
             if evidence:

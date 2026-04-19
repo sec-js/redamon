@@ -20,6 +20,23 @@ from tools import set_tenant_context, set_phase_context, set_graph_view_context
 logger = logging.getLogger(__name__)
 
 
+def _validate_plan_mutex_groups(steps: list) -> str | None:
+    """Return None if OK, or a diagnostic string if two plan steps invoke the
+    same singleton tool group (e.g. two steps both calling metasploit_console).
+
+    Mirrors fireteam_deploy_node._validate_mutex_groups but scans tool_name
+    directly rather than declared skills — plan_tools steps carry the concrete
+    tool call, not a skill declaration.
+    """
+    from project_settings import TOOL_MUTEX_GROUPS
+
+    for group, tools in TOOL_MUTEX_GROUPS.items():
+        claimers = [s.get("tool_name") for s in steps if s.get("tool_name") in tools]
+        if len(claimers) > 1:
+            return f"Multiple plan steps claim mutex group '{group}': {claimers}"
+    return None
+
+
 def _check_roe_blocked(tool_name: str, phase: str) -> str | None:
     """Check if a tool is blocked by Rules of Engagement. Returns error message or None."""
     from project_settings import get_setting
@@ -107,6 +124,7 @@ async def _execute_single_step(
     # Execute the tool
     import time as _time
     _step_t0 = _time.monotonic()
+    user_stopped = False
     try:
         is_long_running_msf = (
             tool_name == "metasploit_console" and
@@ -119,23 +137,70 @@ async def _execute_single_step(
             if streaming_cb:
                 await streaming_cb.on_tool_output_chunk(tn, chunk, is_final=is_final, wave_id=_wid, step_index=_si)
 
+        # Wrap tool execution in an inner task so the per-tool Stop button
+        # (handle_tool_stop → cancel_tool_task) can cancel just this tool
+        # without tearing down the surrounding wave. The inner task is
+        # registered in the ws_manager's tool-task registry and cleared in
+        # the finally block.
         if is_long_running_msf and streaming_cb:
-            result = await tool_executor.execute_with_progress(
+            _tool_coro = tool_executor.execute_with_progress(
                 tool_name, tool_args, phase,
                 progress_callback=_wave_progress,
             )
         elif is_long_running_hydra and streaming_cb:
-            result = await tool_executor.execute_with_progress(
+            _tool_coro = tool_executor.execute_with_progress(
                 tool_name, tool_args, phase,
                 progress_callback=_wave_progress,
                 progress_url=os.environ.get('MCP_HYDRA_PROGRESS_URL', 'http://kali-sandbox:8014/progress'),
             )
         else:
-            result = await tool_executor.execute(tool_name, tool_args, phase)
+            _tool_coro = tool_executor.execute(tool_name, tool_args, phase)
+
+        _tool_task = asyncio.ensure_future(_tool_coro)
+        if streaming_cb and hasattr(streaming_cb, "register_tool_task"):
+            try:
+                streaming_cb.register_tool_task(tool_name, wave_id, step_index, _tool_task)
+            except Exception as e:
+                logger.debug(f"register_tool_task failed: {e}")
+        try:
+            try:
+                result = await _tool_task
+            except asyncio.CancelledError:
+                # Distinguish a per-tool Stop (user clicked Stop on just this
+                # card) from a global cancel (orchestrator shutdown / global
+                # Stop / wave-level cancel). Python's asyncio propagates an
+                # outer cancel down into awaited tasks, so `_tool_task.cancelled()`
+                # alone cannot tell the two apart — both end up True. Instead,
+                # ask the CURRENT task whether it itself has pending cancel
+                # requests. If it does, the cancel came from outside this
+                # coroutine and must propagate; otherwise only the inner
+                # task was cancelled (per-tool Stop).
+                _cur = asyncio.current_task()
+                outer_being_cancelled = bool(_cur and _cur.cancelling())
+                if outer_being_cancelled:
+                    if not _tool_task.done():
+                        _tool_task.cancel()
+                    raise
+                user_stopped = True
+                result = {
+                    "success": False,
+                    "error": "Stopped by user",
+                    "output": "Stopped by user",
+                }
+        finally:
+            if streaming_cb and hasattr(streaming_cb, "unregister_tool_task"):
+                try:
+                    streaming_cb.unregister_tool_task(tool_name, wave_id, step_index)
+                except Exception:
+                    pass
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.error(f"Tool execution error for {tool_name}: {e}")
         result = {"success": False, "error": str(e), "output": f"Error: {e}"}
     step["duration_ms"] = int((_time.monotonic() - _step_t0) * 1000)
+    if user_stopped:
+        step["stopped_by_user"] = True
 
     # Store result
     if result:
@@ -146,6 +211,16 @@ async def _execute_single_step(
         step["tool_output"] = ""
         step["success"] = False
         step["error_message"] = "Tool execution returned no result"
+
+    # Same embedded-error detection as execute_tool_node so plan-wave steps
+    # that returned success=True with a Playwright timeout / connection error
+    # in the body flip to success=False and produce a ChainFailure record.
+    from orchestrator_helpers.nodes.execute_tool_node import _detect_embedded_tool_error
+    embedded_err = _detect_embedded_tool_error(step.get("tool_output") or "")
+    if step.get("success") and embedded_err:
+        step["success"] = False
+        step["error_message"] = step.get("error_message") or embedded_err
+        step["error_embedded"] = True
 
     tool_output = step.get("tool_output", "")
 
@@ -259,6 +334,35 @@ async def execute_plan_node(
             )
         except Exception as e:
             logger.warning(f"Error emitting plan_start: {e}")
+
+    # Mutex validation — reject plans that stack singleton tools (e.g.
+    # metasploit_console) in parallel. Runs after plan_start so the UI renders
+    # a proper plan card with a rejection reason rather than a silent no-op.
+    mutex_error = _validate_plan_mutex_groups(steps)
+    if mutex_error:
+        logger.warning(
+            f"[{user_id}/{project_id}/{session_id}] plan mutex conflict: {mutex_error}"
+        )
+        rejection = (
+            f"Plan rejected: {mutex_error}. "
+            f"Revise the plan so only one step invokes this singleton tool per wave "
+            f"(serialize across iterations instead)."
+        )
+        for step in steps:
+            step["tool_output"] = rejection
+            step["success"] = False
+            step["error_message"] = rejection
+        if streaming_cb:
+            try:
+                await streaming_cb.on_plan_complete(
+                    wave_id=wave_id,
+                    total=len(steps),
+                    successful=0,
+                    failed=len(steps),
+                )
+            except Exception as e:
+                logger.warning(f"Error emitting plan_complete after mutex reject: {e}")
+        return {"_current_plan": plan_data}
 
     # Execute all steps in parallel
     tasks = [

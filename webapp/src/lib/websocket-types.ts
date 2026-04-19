@@ -22,6 +22,7 @@ export enum MessageType {
   SKILL_INJECT = 'skill_inject',
   STOP = 'stop',
   RESUME = 'resume',
+  TOOL_STOP = 'tool_stop',
 
   // Server → Client
   CONNECTED = 'connected',
@@ -118,6 +119,8 @@ export interface FireteamThinkingPayload {
   phase: string
   thought: string
   reasoning: string
+  input_tokens?: number
+  output_tokens?: number
 }
 
 export interface FireteamToolStartPayload {
@@ -174,6 +177,8 @@ export interface FireteamMemberCompletedPayload {
   status: FireteamMemberStatus
   iterations_used: number
   tokens_used: number
+  input_tokens_used?: number
+  output_tokens_used?: number
   findings_count: number
   wall_clock_seconds: number
   error_message?: string | null
@@ -237,6 +242,12 @@ export interface StoppedPayload {
   phase: string
 }
 
+export interface ToolStopPayload {
+  tool_name: string
+  wave_id?: string
+  step_index?: number
+}
+
 export interface ToolConfirmationTool {
   tool_name: string
   tool_args: Record<string, unknown>
@@ -273,6 +284,9 @@ export interface ThinkingPayload {
   phase: string
   thought: string
   reasoning: string
+  action?: string
+  input_tokens?: number
+  output_tokens?: number
 }
 
 export interface ThinkingChunkPayload {

@@ -132,7 +132,7 @@ def execute_playwright(url: str = "", script: str = "", selector: str = "", form
 def _execute_content_mode(url: str, selector: str, format: str) -> str:
     """Mode 1: Navigate to URL and extract rendered content."""
     use_html = format.lower() == "html"
-    max_chars = 15000
+    max_chars = 40000
 
     script = textwrap.dedent(f"""\
         from playwright.sync_api import sync_playwright

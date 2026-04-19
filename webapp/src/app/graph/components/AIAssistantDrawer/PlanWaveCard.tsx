@@ -22,9 +22,11 @@ interface PlanWaveCardProps {
   onApprove?: () => void
   onReject?: () => void
   confirmationDisabled?: boolean
+  /** Cancel a single running tool inside this wave. Receives the tool's item.id. */
+  onToolStop?: (itemId: string) => void
 }
 
-export function PlanWaveCard({ item, isExpanded, onToggleExpand, missingApiKeys, onAddApiKey, onApprove, onReject, confirmationDisabled }: PlanWaveCardProps) {
+export function PlanWaveCard({ item, isExpanded, onToggleExpand, missingApiKeys, onAddApiKey, onApprove, onReject, confirmationDisabled, onToolStop }: PlanWaveCardProps) {
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set())
 
   const toggleToolExpand = (toolId: string) => {
@@ -144,6 +146,7 @@ export function PlanWaveCard({ item, isExpanded, onToggleExpand, missingApiKeys,
                 onToggleExpand={() => toggleToolExpand(tool.id)}
                 missingApiKey={missingApiKeys?.has(tool.tool_name)}
                 onAddApiKey={onAddApiKey ? () => onAddApiKey(tool.tool_name) : undefined}
+                onStop={onToolStop ? () => onToolStop(tool.id) : undefined}
               />
             ))}
           </div>

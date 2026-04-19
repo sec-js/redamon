@@ -355,7 +355,7 @@ export function AgentBehaviourSection({ data, updateField }: AgentBehaviourSecti
             const maxConcurrent = (data as any).fireteamMaxConcurrent ?? 5
             const maxMembers = (data as any).fireteamMaxMembers ?? 5
             const memberMaxIter = (data as any).fireteamMemberMaxIterations ?? 20
-            const timeoutSec = (data as any).fireteamTimeoutSec ?? 1800
+            const timeoutSec = (data as any).fireteamTimeoutSec ?? 3600
             const allowedPhasesRaw = (data as any).fireteamAllowedPhases ?? ['informational', 'exploitation', 'post_exploitation']
             const allowedPhases: string[] = Array.isArray(allowedPhasesRaw)
               ? allowedPhasesRaw

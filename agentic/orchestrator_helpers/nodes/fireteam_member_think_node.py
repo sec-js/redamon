@@ -675,6 +675,8 @@ async def fireteam_member_think_node(
     decision = None
     parse_error: Optional[str] = None
     raw_content = ""
+    input_tokens_this_turn = 0
+    output_tokens_this_turn = 0
 
     for attempt in range(max_retries):
         if attempt > 0:
@@ -702,6 +704,11 @@ async def fireteam_member_think_node(
             }
 
         raw_content = normalize_content(response.content if hasattr(response, "content") else response)
+
+        _usage = getattr(response, "usage_metadata", None) or {}
+        input_tokens_this_turn += int(_usage.get("input_tokens", 0) or 0)
+        output_tokens_this_turn += int(_usage.get("output_tokens", 0) or 0)
+
         decision, parse_error = try_parse_llm_decision(raw_content)
         if decision is not None:
             break
@@ -747,25 +754,34 @@ async def fireteam_member_think_node(
         elif decision.action == "plan_tools" and _plan_has_dangerous_tool(decision):
             is_dangerous = True
 
-    # Token accounting: count THIS turn's delta only (system prompt + LLM
-    # response), not cumulative history. Cumulative counting produces O(N^2)
-    # growth in tokens_used as the conversation lengthens, which would
-    # massively over-report in metrics/UI/reports.
-    tokens_this_turn: int
-    try:
-        tokens_this_turn = int(llm.get_num_tokens_from_messages([
-            SystemMessage(content=system_prompt),
-            AIMessage(content=raw_content),
-        ]))
-    except Exception:
-        tokens_this_turn = max(
-            1,
-            int((len(system_prompt) + len(raw_content)) / 3.5),
-        )
+    # Token accounting: prefer provider-reported usage_metadata (accurate
+    # per-call). Fall back to the tokenizer estimate, and finally to a crude
+    # char/3.5 estimate, so we always emit SOMETHING for the UI even if the
+    # provider skips usage reporting. Count THIS turn's delta only: cumulative
+    # counting on history would produce O(N^2) growth.
+    if input_tokens_this_turn == 0 and output_tokens_this_turn == 0:
+        try:
+            _est = int(llm.get_num_tokens_from_messages([
+                SystemMessage(content=system_prompt),
+                AIMessage(content=raw_content),
+            ]))
+        except Exception:
+            _est = max(1, int((len(system_prompt) + len(raw_content)) / 3.5))
+        # Rough split when provider didn't report: ~85% input / 15% output.
+        input_tokens_this_turn = int(_est * 0.85)
+        output_tokens_this_turn = max(1, _est - input_tokens_this_turn)
+
+    tokens_this_turn = input_tokens_this_turn + output_tokens_this_turn
+    prev_in = int(state.get("input_tokens_used", 0) or 0)
+    prev_out = int(state.get("output_tokens_used", 0) or 0)
 
     update: dict = {
         "current_iteration": current_iter + 1,
         "tokens_used": tokens_used + tokens_this_turn,
+        "input_tokens_used": prev_in + input_tokens_this_turn,
+        "output_tokens_used": prev_out + output_tokens_this_turn,
+        "_input_tokens_this_turn": input_tokens_this_turn,
+        "_output_tokens_this_turn": output_tokens_this_turn,
         "_decision": decision.model_dump(),
         "messages": [AIMessage(content=raw_content)],
     }

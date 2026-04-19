@@ -84,7 +84,9 @@ class MemberScopedCallback:
     # ----- Thinking (the member is reasoning) -----
 
     async def on_thinking(self, iteration: int, phase: str, thought: str, reasoning: str,
-                          action: Optional[str] = None):
+                          action: Optional[str] = None,
+                          input_tokens: int = 0,
+                          output_tokens: int = 0):
         # `action` is root-side only: fireteam_thinking has its own payload
         # shape and doesn't carry it. Accept and drop.
         try:
@@ -96,10 +98,15 @@ class MemberScopedCallback:
                 phase=phase,
                 thought=thought,
                 reasoning=reasoning,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
         except AttributeError:
             # Older callback without fireteam_thinking: fall back to generic.
-            await self._real.on_thinking(iteration, phase, thought, reasoning, action=action)
+            await self._real.on_thinking(
+                iteration, phase, thought, reasoning, action=action,
+                input_tokens=input_tokens, output_tokens=output_tokens,
+            )
 
     async def on_thinking_chunk(self, chunk: str):
         # No fireteam-scoped streaming chunk yet; swallow to avoid mixing with root.

@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import type { Conversation } from '@/hooks/useConversations'
 import type { TodoItem } from '@/lib/websocket-types'
 import type { ChatItem, Message, FileDownloadItem, Phase } from '../types'
-import type { ThinkingItem, ToolExecutionItem, PlanWaveItem, DeepThinkItem } from '../AgentTimeline'
+import type { ThinkingItem, ToolExecutionItem, PlanWaveItem, DeepThinkItem, FireteamItem } from '../AgentTimeline'
 import type { ActiveSkill } from './useSendHandlers'
 
 interface ConversationRestorationDeps {
@@ -193,6 +193,8 @@ export function useConversationRestoration(deps: ConversationRestorationDeps) {
           reasoning: data.reasoning || '',
           action: 'thinking',
           updated_todo_list: [],
+          input_tokens: Math.max(0, Number(data.input_tokens || 0)),
+          output_tokens: Math.max(0, Number(data.output_tokens || 0)),
         } as ThinkingItem
       } else if (msg.type === 'tool_start') {
         if (data.wave_id) return null
@@ -563,6 +565,21 @@ export function useConversationRestoration(deps: ConversationRestorationDeps) {
           for (const f of fireteams) {
             const startedAt = f.startedAt ? new Date(f.startedAt) : new Date()
             const completedAt = f.completedAt ? new Date(f.completedAt) : undefined
+            const waveStatus: FireteamItem['status'] = ((): any => {
+              const s = f.status || 'running'
+              return ['running', 'completed', 'timeout', 'cancelled', 'failed'].includes(s) ? s : 'completed'
+            })()
+            // If the wave is terminal, any DB-recorded member that's still
+            // `running` is stale (the per-member PATCH may have failed, or
+            // the row predates the backend fix that patches members on
+            // cancel). Cascade the wave's terminal status down so the UI
+            // doesn't show specialists "RUNNING" under a CANCELLED header.
+            const isTerminal = waveStatus !== 'running'
+            const cascadeMemberStatus =
+              waveStatus === 'cancelled' ? 'cancelled'
+              : waveStatus === 'timeout' ? 'timeout'
+              : waveStatus === 'failed' ? 'error'
+              : 'success'
             restored.push({
               type: 'fireteam',
               id: f.fireteamIdKey,
@@ -572,28 +589,37 @@ export function useConversationRestoration(deps: ConversationRestorationDeps) {
               timestamp: startedAt,
               started_at: startedAt,
               completed_at: completedAt,
-              status: ((): any => {
-                const s = f.status || 'running'
-                return ['running', 'completed', 'timeout', 'cancelled', 'failed'].includes(s) ? s : 'completed'
-              })(),
+              status: waveStatus,
               status_counts: f.statusCounts ?? undefined,
               wall_clock_seconds: f.wallClockSeconds ?? undefined,
-              members: (f.members ?? []).map((m: any) => ({
-                member_id: m.memberIdKey,
-                name: m.name,
-                task: m.task ?? '',
-                skills: m.skills ?? [],
-                status: m.status,
-                started_at: m.startedAt ? new Date(m.startedAt) : startedAt,
-                completed_at: m.completedAt ? new Date(m.completedAt) : undefined,
-                tools: [],
-                planWaves: [],
-                iterations_used: m.iterationsUsed ?? 0,
-                tokens_used: m.tokensUsed ?? 0,
-                findings_count: m.findingsCount ?? 0,
-                completion_reason: m.completionReason ?? undefined,
-                error_message: m.errorMessage ?? undefined,
-              })),
+              members: (f.members ?? []).map((m: any) => {
+                const rawStatus = m.status
+                const memberStatus = isTerminal
+                  && (rawStatus === 'running' || rawStatus === 'needs_confirmation' || !rawStatus)
+                  ? cascadeMemberStatus
+                  : rawStatus
+                return {
+                  member_id: m.memberIdKey,
+                  name: m.name,
+                  task: m.task ?? '',
+                  skills: m.skills ?? [],
+                  status: memberStatus,
+                  started_at: m.startedAt ? new Date(m.startedAt) : startedAt,
+                  completed_at: m.completedAt
+                    ? new Date(m.completedAt)
+                    : (isTerminal ? (completedAt ?? new Date()) : undefined),
+                  tools: [],
+                  planWaves: [],
+                  iterations_used: m.iterationsUsed ?? 0,
+                  tokens_used: m.tokensUsed ?? 0,
+                  input_tokens_used: 0,
+                  output_tokens_used: 0,
+                  findings_count: m.findingsCount ?? 0,
+                  completion_reason: m.completionReason
+                    ?? (memberStatus !== rawStatus ? `wave_${waveStatus}` : undefined),
+                  error_message: m.errorMessage ?? undefined,
+                }
+              }),
             } as any)
           }
         }
@@ -633,13 +659,18 @@ export function useConversationRestoration(deps: ConversationRestorationDeps) {
         const d = msg.data || {}
         const ts = new Date(msg.createdAt)
         switch (msg.type) {
-          case 'fireteam_thinking':
+          case 'fireteam_thinking': {
+            const inDelta = Math.max(0, Number(d.input_tokens || 0))
+            const outDelta = Math.max(0, Number(d.output_tokens || 0))
             mutate(ftId, mId, m => ({
               ...m,
               latest_thought: (d.thought || d.reasoning || '').slice(0, 240),
               latest_iteration: d.iteration ?? m.latest_iteration,
+              input_tokens_used: (m.input_tokens_used ?? 0) + inDelta,
+              output_tokens_used: (m.output_tokens_used ?? 0) + outDelta,
             }))
             break
+          }
           case 'fireteam_plan_start': {
             const planId = `ft-restore-plan-${ftId}-${mId}-${d.wave_id || msg.id}`
             mutate(ftId, mId, m => ({
@@ -774,6 +805,50 @@ export function useConversationRestoration(deps: ConversationRestorationDeps) {
       }
     } catch (e) {
       console.warn('[fireteam] per-member replay failed:', e)
+    }
+
+    // Final cascade pass: for any fireteam whose wave-level status is
+    // terminal (cancelled / timeout / failed), flip every tool and plan
+    // wave still showing `running` or `pending_approval` to an appropriate
+    // terminal status. The replay block rebuilt cards from persisted
+    // fireteam_tool_start events, but mid-flight tools at cancel time
+    // never got a matching fireteam_tool_complete row — so without this
+    // pass, switching chats and returning to a cancelled wave still shows
+    // tools spinning inside dead specialists.
+    for (let i = 0; i < restored.length; i++) {
+      const it = restored[i] as any
+      if (!it || it.type !== 'fireteam') continue
+      const status = it.status
+      if (status === 'running') continue
+      const cascadeLabel =
+        status === 'cancelled' ? 'Cancelled by operator'
+        : status === 'timeout' ? 'Wave timeout'
+        : status === 'failed' ? 'Wave failed'
+        : null
+      const cascadedMembers = (it.members || []).map((m: any) => {
+        const flipTool = (t: any) => (
+          t.status === 'running' || t.status === 'pending_approval'
+            ? {
+                ...t,
+                status: 'error',
+                final_output: t.final_output ?? cascadeLabel ?? undefined,
+                duration: t.duration ?? Math.max(0, Date.now() - (t.timestamp?.getTime?.() ?? Date.now())),
+              }
+            : t
+        )
+        const nextTools = (m.tools || []).map(flipTool)
+        const nextWaves = (m.planWaves || []).map((w: any) => {
+          if (w.status !== 'running' && w.status !== 'pending_approval') return w
+          return {
+            ...w,
+            tools: (w.tools || []).map(flipTool),
+            status: 'error',
+            interpretation: w.interpretation ?? cascadeLabel ?? undefined,
+          }
+        })
+        return { ...m, tools: nextTools, planWaves: nextWaves }
+      })
+      restored[i] = { ...it, members: cascadedMembers }
     }
 
     // Sort by timestamp

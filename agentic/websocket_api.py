@@ -49,6 +49,7 @@ class MessageType(str, Enum):
     SKILL_INJECT = "skill_inject"
     STOP = "stop"
     RESUME = "resume"
+    TOOL_STOP = "tool_stop"
 
     # Server → Client
     CONNECTED = "connected"
@@ -141,6 +142,19 @@ class GuidanceMessage(BaseModel):
     message: str
 
 
+class ToolStopMessage(BaseModel):
+    """Cancel a single running tool execution.
+
+    Identifies the specific tool to stop via tool_name plus optional
+    wave_id / step_index (for tools running inside a plan wave). The
+    running task is cancelled and the tool completes with success=False,
+    letting the agent flow proceed to the next tool / iteration.
+    """
+    tool_name: str
+    wave_id: Optional[str] = None
+    step_index: Optional[int] = None
+
+
 # =============================================================================
 # WEBSOCKET CONNECTION MANAGER
 # =============================================================================
@@ -203,7 +217,50 @@ class WebSocketManager:
         self.active_connections: Dict[str, WebSocketConnection] = {}
         # Separate task registry keyed by session_key — survives connection replacement
         self._active_tasks: Dict[str, asyncio.Task] = {}
+        # Per-tool task registry for individual tool cancellation.
+        # Keyed by f"{session_key}|{wave_id or '__standalone__'}|{step_index if step_index is not None else -1}|{tool_name}".
+        # Populated by execute_tool_node / execute_plan_node before awaiting the
+        # tool executor; cleared in a finally block after the tool returns or
+        # is cancelled.
+        self._tool_tasks: Dict[str, asyncio.Task] = {}
         self.lock = asyncio.Lock()
+
+    @staticmethod
+    def _tool_task_key(session_key: str, tool_name: str,
+                       wave_id: Optional[str], step_index: Optional[int]) -> str:
+        wid = wave_id or "__standalone__"
+        sidx = step_index if step_index is not None else -1
+        return f"{session_key}|{wid}|{sidx}|{tool_name}"
+
+    def register_tool_task(self, session_key: str, tool_name: str,
+                           wave_id: Optional[str], step_index: Optional[int],
+                           task: asyncio.Task):
+        key = self._tool_task_key(session_key, tool_name, wave_id, step_index)
+        self._tool_tasks[key] = task
+
+    def unregister_tool_task(self, session_key: str, tool_name: str,
+                             wave_id: Optional[str], step_index: Optional[int]):
+        key = self._tool_task_key(session_key, tool_name, wave_id, step_index)
+        self._tool_tasks.pop(key, None)
+
+    def cancel_tool_task(self, session_key: str, tool_name: str,
+                         wave_id: Optional[str], step_index: Optional[int]) -> bool:
+        """Cancel a specific running tool task. Returns True if a task was cancelled."""
+        key = self._tool_task_key(session_key, tool_name, wave_id, step_index)
+        task = self._tool_tasks.get(key)
+        if task and not task.done():
+            task.cancel()
+            return True
+        # Fallback: if step_index wasn't provided, try the standalone key or
+        # any matching tool_name within this session. This handles cases
+        # where the frontend couldn't disambiguate.
+        if step_index is None and wave_id is None:
+            prefix = f"{session_key}|__standalone__|"
+            for k, t in list(self._tool_tasks.items()):
+                if k.startswith(prefix) and k.endswith(f"|{tool_name}") and not t.done():
+                    t.cancel()
+                    return True
+        return False
 
     async def connect(self, websocket: WebSocket) -> WebSocketConnection:
         """Accept new WebSocket connection"""
@@ -420,13 +477,19 @@ class StreamingCallback:
             self._persist_queue.put_nowait((msg_type, data))
 
     async def on_thinking(self, iteration: int, phase: str, thought: str, reasoning: str,
-                          action: Optional[str] = None):
+                          action: Optional[str] = None,
+                          input_tokens: int = 0,
+                          output_tokens: int = 0):
         """Called when agent starts thinking.
 
         `action` is the decision's action (e.g. "use_tool", "deploy_fireteam").
         It's persisted so session restore can suppress redundant thinking
         cards — notably `deploy_fireteam` thinks whose rationale already
         lives on the FireteamCard.
+
+        `input_tokens` / `output_tokens` are the per-turn LLM usage deltas
+        (from provider usage_metadata). The UI renders them as "in X · out Y"
+        and sums them across every thinking event for the cumulative counter.
         """
         payload = {
             "iteration": iteration,
@@ -434,6 +497,8 @@ class StreamingCallback:
             "thought": thought,
             "reasoning": reasoning,
             "action": action,
+            "input_tokens": int(input_tokens or 0),
+            "output_tokens": int(output_tokens or 0),
         }
         await self.connection.send_message(MessageType.THINKING, payload)
         self._persist("thinking", payload)
@@ -558,7 +623,9 @@ class StreamingCallback:
                       fireteam_id_key=fireteam_id, member_id_key=member_id)
 
     async def on_fireteam_thinking(self, fireteam_id: str, member_id: str, name: str,
-                                   iteration: int, phase: str, thought: str, reasoning: str):
+                                   iteration: int, phase: str, thought: str, reasoning: str,
+                                   input_tokens: int = 0,
+                                   output_tokens: int = 0):
         payload = {
             "fireteam_id": fireteam_id,
             "member_id": member_id,
@@ -567,6 +634,8 @@ class StreamingCallback:
             "phase": phase,
             "thought": thought,
             "reasoning": reasoning,
+            "input_tokens": int(input_tokens or 0),
+            "output_tokens": int(output_tokens or 0),
         }
         await self.connection.send_message(MessageType.FIRETEAM_THINKING, payload)
         self._persist("fireteam_thinking", payload,
@@ -659,7 +728,9 @@ class StreamingCallback:
     async def on_fireteam_member_completed(self, fireteam_id: str, member_id: str, name: str,
                                            status: str, iterations_used: int, tokens_used: int,
                                            findings_count: int, wall_clock_seconds: float,
-                                           error_message: Optional[str] = None):
+                                           error_message: Optional[str] = None,
+                                           input_tokens_used: int = 0,
+                                           output_tokens_used: int = 0):
         payload = {
             "fireteam_id": fireteam_id,
             "member_id": member_id,
@@ -667,6 +738,8 @@ class StreamingCallback:
             "status": status,
             "iterations_used": iterations_used,
             "tokens_used": tokens_used,
+            "input_tokens_used": int(input_tokens_used or 0),
+            "output_tokens_used": int(output_tokens_used or 0),
             "findings_count": findings_count,
             "wall_clock_seconds": wall_clock_seconds,
             "error_message": error_message,
@@ -829,6 +902,26 @@ class StreamingCallback:
         await self.connection.send_message(MessageType.FILE_READY, file_info)
         self._persist("file_ready", file_info)
         logger.info(f"File ready notification sent: {file_info.get('filename')}")
+
+    # ------------------------------------------------------------------
+    # Per-tool task registry helpers
+    # ------------------------------------------------------------------
+    # The execute_tool_node / execute_plan_node wrappers call these to
+    # register their inner asyncio.Task so the frontend's per-tool stop
+    # button can cancel just that one tool via handle_tool_stop.
+    def register_tool_task(self, tool_name: str, wave_id: Optional[str],
+                           step_index: Optional[int], task: asyncio.Task):
+        if self._ws_manager and self._session_key:
+            self._ws_manager.register_tool_task(
+                self._session_key, tool_name, wave_id, step_index, task,
+            )
+
+    def unregister_tool_task(self, tool_name: str, wave_id: Optional[str],
+                             step_index: Optional[int]):
+        if self._ws_manager and self._session_key:
+            self._ws_manager.unregister_tool_task(
+                self._session_key, tool_name, wave_id, step_index,
+            )
 
 
 # =============================================================================
@@ -1333,6 +1426,48 @@ class WebSocketHandler:
             })
             asyncio.create_task(update_conversation(connection.session_id, {"agentRunning": False}))
 
+    async def handle_tool_stop(self, connection: WebSocketConnection, payload: dict):
+        """Cancel a single running tool — the agent flow continues with the next tool.
+
+        Looks up the tool task in the per-tool registry keyed by
+        (session_key, wave_id, step_index, tool_name). When cancelled, the
+        wrapper in execute_tool_node / execute_plan_node catches the
+        CancelledError and marks the tool as failed, so the agent's normal
+        success/failure branches take over from there (no global stop).
+        """
+        if not connection.authenticated:
+            await connection.send_message(MessageType.ERROR, {
+                "message": "Not authenticated",
+                "recoverable": False,
+            })
+            return
+        try:
+            msg = ToolStopMessage(**payload)
+        except ValidationError as e:
+            logger.error(f"Invalid tool_stop message: {e}")
+            await connection.send_message(MessageType.ERROR, {
+                "message": "Invalid tool_stop payload",
+                "recoverable": True,
+            })
+            return
+
+        session_key = connection.get_key()
+        cancelled = self.ws_manager.cancel_tool_task(
+            session_key, msg.tool_name, msg.wave_id, msg.step_index,
+        )
+        logger.info(
+            f"[{connection.session_id}] tool_stop requested for {msg.tool_name} "
+            f"(wave={msg.wave_id}, step={msg.step_index}) — cancelled={cancelled}"
+        )
+        if not cancelled:
+            # Best-effort: tool may have already completed between click and
+            # receive. Swallow silently — the tool's own tool_complete event
+            # will reach the UI and reconcile state. Don't error: treating
+            # this as recoverable noise keeps the UX calm.
+            logger.debug(
+                f"No running tool task found for {msg.tool_name} in {session_key}"
+            )
+
     async def handle_resume(self, connection: WebSocketConnection, payload: dict):
         """Handle resume request — restarts agent from last checkpoint."""
         if not connection.authenticated:
@@ -1422,6 +1557,8 @@ class WebSocketHandler:
                 await self.handle_skill_inject(connection, payload)
             elif msg_type == MessageType.STOP:
                 await self.handle_stop(connection, payload)
+            elif msg_type == MessageType.TOOL_STOP:
+                await self.handle_tool_stop(connection, payload)
             elif msg_type == MessageType.RESUME:
                 await self.handle_resume(connection, payload)
             else:

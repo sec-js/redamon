@@ -136,7 +136,7 @@ def execute_nuclei(args: str) -> str:
             ["nuclei"] + cmd_args,
             capture_output=True,
             text=True,
-            timeout=600
+            timeout=1800  # 30 min — full template scans routinely take 20-40 min
         )
         output = result.stdout
         if result.stderr:

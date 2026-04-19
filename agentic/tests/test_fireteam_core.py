@@ -207,6 +207,18 @@ class MutexGroupValidationTests(unittest.TestCase):
         ]
         self.assertIsNone(self._validate(plan))
 
+    def test_multiple_playwright_members_ok(self):
+        # execute_playwright spawns a fresh Chromium per invocation, so the
+        # server is not a singleton. The 'browser' mutex group was removed to
+        # unblock multi-member recon waves where several specialists all need
+        # to render pages.
+        plan = [
+            {"name": "Auth Hunter", "skills": ["playwright", "curl"]},
+            {"name": "Surface Mapper", "skills": ["playwright", "curl"]},
+            {"name": "Header Analyst", "skills": ["playwright", "curl"]},
+        ]
+        self.assertIsNone(self._validate(plan))
+
 
 # =============================================================================
 # 4. fireteam_collect_node: merge + first-escalation-wins + summary
@@ -246,6 +258,98 @@ class CollectNodeMergeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(findings[0]["source_agent"], "Web")
         self.assertEqual(findings[0]["fireteam_id"], "fteam-1")
 
+
+# =============================================================================
+# 4b. Post-fireteam loop prevention: attribution render, TODO auto-completion,
+#     trimmed summary.
+# =============================================================================
+
+class PostFireteamLoopPreventionTests(unittest.TestCase):
+    def test_finding_render_surfaces_source_agent(self):
+        from state import format_chain_context
+        rendered = format_chain_context(
+            chain_findings=[
+                {"severity": "medium", "title": "Missing HSTS",
+                 "step_iteration": 2, "confidence": 95,
+                 "source_agent": "Header & Policy Analyst",
+                 "evidence": "no HSTS header"},
+                {"severity": "low", "title": "Root finding",
+                 "step_iteration": 1, "confidence": 90,
+                 "evidence": "root-level"},
+            ],
+            chain_failures=[],
+            chain_decisions=[],
+            execution_trace=[],
+        )
+        # Fireteam finding shows attribution; root finding does not.
+        self.assertIn("from Header & Policy Analyst", rendered)
+        self.assertNotIn("from None", rendered)
+        self.assertIn("(step 1, 90%)", rendered)  # root finding unattributed
+
+    def test_auto_complete_closes_member_matched_todos(self):
+        from orchestrator_helpers.nodes.fireteam_collect_node import _auto_complete_fireteam_todos
+        todos = [
+            {"id": "1", "description": "Deploy fireteam with 3 specialists", "status": "in_progress"},
+            {"id": "2", "description": "Auth Hunter: find auth flows", "status": "pending"},
+            {"id": "3", "description": "Surface Mapper: map routes", "status": "pending"},
+            {"id": "4", "description": "Analyst: security headers", "status": "pending"},
+            {"id": "5", "description": "Write consolidated final report", "status": "pending"},
+        ]
+        results = [
+            {"name": "Auth Hunter", "status": "success"},
+            {"name": "Surface Mapper", "status": "success"},
+            {"name": "Analyst", "status": "partial"},  # did not succeed
+        ]
+        out = _auto_complete_fireteam_todos(todos, results)
+        by_id = {t["id"]: t for t in out}
+        self.assertEqual(by_id["1"]["status"], "completed")       # generic 'fireteam' match
+        self.assertEqual(by_id["2"]["status"], "completed")       # name match, success
+        self.assertEqual(by_id["3"]["status"], "completed")       # name match, success
+        self.assertEqual(by_id["4"]["status"], "pending")         # Analyst not success
+        self.assertEqual(by_id["5"]["status"], "pending")         # no match
+
+    def test_auto_complete_leaves_completed_todos_alone(self):
+        from orchestrator_helpers.nodes.fireteam_collect_node import _auto_complete_fireteam_todos
+        todos = [
+            {"id": "1", "description": "Already done", "status": "completed",
+             "completed_at": "2026-01-01T00:00:00Z"},
+        ]
+        out = _auto_complete_fireteam_todos(todos, [{"name": "Already done", "status": "success"}])
+        self.assertEqual(out[0]["completed_at"], "2026-01-01T00:00:00Z")
+
+    def test_auto_complete_noop_when_no_successes(self):
+        from orchestrator_helpers.nodes.fireteam_collect_node import _auto_complete_fireteam_todos
+        todos = [{"id": "1", "description": "Auth Hunter: work", "status": "in_progress"}]
+        out = _auto_complete_fireteam_todos(todos, [{"name": "Auth Hunter", "status": "error"}])
+        self.assertEqual(out[0]["status"], "in_progress")
+
+    def test_summary_trimmed(self):
+        from orchestrator_helpers.nodes.fireteam_collect_node import _render_summary
+        results = [
+            {"member_id": "m1", "name": "Auth Hunter", "status": "success",
+             "iterations_used": 8, "tokens_used": 77000,
+             "findings": [{"severity": "high", "title": "x"}] * 13},
+            {"member_id": "m2", "name": "Surface Mapper", "status": "success",
+             "iterations_used": 11, "tokens_used": 127000,
+             "findings": [{"severity": "low", "title": "y"}] * 22},
+        ]
+        out = _render_summary("fteam-1-abc", results, wall_s=355.2)
+        # Header captures success ratio + duration
+        self.assertIn("2/2 specialists completed in 355.2s", out)
+        # Per-member compact line present
+        self.assertIn("- Auth Hunter (success, 8 iter, 13 findings)", out)
+        self.assertIn("- Surface Mapper (success, 11 iter, 22 findings)", out)
+        # Old verbose per-finding titles are gone
+        self.assertNotIn("Findings: 13", out)
+        self.assertNotIn("[high] x", out)
+
+
+# =============================================================================
+# 4c. First-escalation-wins (async — restored after the sync loop-prevention
+#     class so it lives under the AsyncioTestCase harness).
+# =============================================================================
+
+class CollectNodeEscalationTests(unittest.IsolatedAsyncioTestCase):
     async def test_first_escalation_wins(self):
         from orchestrator_helpers.nodes.fireteam_collect_node import fireteam_collect_node
         state = {

@@ -50,6 +50,7 @@ interface UseAgentWebSocketReturn {
   sendSkillInject: (payload: { skill_id: string; skill_name: string; content: string }) => void
   sendStop: () => void
   sendResume: () => void
+  sendToolStop: (tool_name: string, wave_id?: string, step_index?: number) => void
   disconnect: () => void
   reconnect: () => void
 }
@@ -202,6 +203,17 @@ export function useAgentWebSocket({
   const sendResume = useCallback(() => {
     if (!isAuthenticatedRef.current) return
     sendMessage(MessageType.RESUME, {})
+  }, [sendMessage])
+
+  // Public API: Stop a single tool (same semantics as the global Stop button
+  // but scoped to one tool_execution card). Backend cancels just that tool
+  // task; the tool completes with success=false and the agent flow proceeds.
+  const sendToolStop = useCallback((tool_name: string, wave_id?: string, step_index?: number) => {
+    if (!isAuthenticatedRef.current) return
+    const payload: { tool_name: string; wave_id?: string; step_index?: number } = { tool_name }
+    if (wave_id) payload.wave_id = wave_id
+    if (step_index !== undefined && step_index !== null) payload.step_index = step_index
+    sendMessage(MessageType.TOOL_STOP, payload)
   }, [sendMessage])
 
   // Start ping interval for keep-alive
@@ -411,6 +423,7 @@ export function useAgentWebSocket({
     sendSkillInject,
     sendStop,
     sendResume,
+    sendToolStop,
     disconnect,
     reconnect,
   }
