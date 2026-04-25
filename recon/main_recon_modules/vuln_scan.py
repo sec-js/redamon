@@ -17,11 +17,23 @@ Supports proxy/Tor for anonymous scanning.
 """
 
 import copy
+import ipaddress
 import json
 import subprocess
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlparse
 import sys
+
+
+def _url_host_is_ip(url: str) -> bool:
+    """Return True if the URL's host is a literal IPv4/IPv6 address."""
+    try:
+        host = urlparse(url).hostname or ""
+        ipaddress.ip_address(host)
+        return True
+    except (ValueError, TypeError):
+        return False
 
 # Add project root to path for imports
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -50,6 +62,73 @@ from recon.helpers import (
     # Security checks
     run_security_checks,
 )
+
+
+def _execute_nuclei_pass(cmd: list, output_file: str, label: str) -> tuple:
+    """
+    Run a single nuclei invocation and parse the JSONL output.
+
+    Returns (findings, false_positives, duration_seconds, return_code).
+    """
+    print(f"[*][Nuclei] Running {label} pass [DOCKER]...")
+    print(f"[*][Nuclei] {label} command: {' '.join(cmd[:12])}...")
+
+    start_time = datetime.now()
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    stderr_lines = []
+    for line in process.stdout:
+        line = line.rstrip()
+        if not line:
+            continue
+        print(f"[*][Nuclei][{label}] {line}", flush=True)
+        stderr_lines.append(line)
+    process.wait()
+    duration = (datetime.now() - start_time).total_seconds()
+
+    if process.returncode != 0 and stderr_lines:
+        # Skip noise: nuclei [WRN]/[INF] lines, the pipe-format stats heartbeat
+        # (`| Duration: 0:00:30 | ...`), and the JSON-format stats heartbeat
+        # ({"duration":...,"matched":...}) so they don't masquerade as errors.
+        error_lines = [
+            l for l in stderr_lines
+            if l
+            and 'WRN' not in l
+            and 'INF' not in l
+            and '| Duration:' not in l
+            and not (l.lstrip().startswith('{') and '"duration"' in l)
+        ]
+        if error_lines:
+            print(f"[!][Nuclei] {label} warnings: {error_lines[0][:100]}")
+
+    findings = []
+    false_positives = []
+    if Path(output_file).exists():
+        with open(output_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    raw_finding = json.loads(line)
+                    is_fp, fp_reason = is_false_positive(raw_finding)
+                    if is_fp:
+                        false_positives.append({
+                            "template_id": raw_finding.get("template-id", "unknown"),
+                            "matched_at": raw_finding.get("matched-at", "unknown"),
+                            "reason": fp_reason,
+                        })
+                        continue
+                    findings.append(parse_nuclei_finding(raw_finding))
+                except json.JSONDecodeError:
+                    continue
+
+    return findings, false_positives, duration, process.returncode
 
 
 # =============================================================================
@@ -99,7 +178,7 @@ def run_vuln_scan(recon_data: dict, output_file: Path = None, settings: dict = N
     NUCLEI_RETRIES = settings.get('NUCLEI_RETRIES', 1)
     NUCLEI_TAGS = settings.get('NUCLEI_TAGS', [])
     NUCLEI_EXCLUDE_TAGS = settings.get('NUCLEI_EXCLUDE_TAGS', [])
-    NUCLEI_DAST_MODE = settings.get('NUCLEI_DAST_MODE', True)
+    NUCLEI_DAST_MODE = settings.get('NUCLEI_DAST_MODE', False)
     NUCLEI_NEW_TEMPLATES_ONLY = settings.get('NUCLEI_NEW_TEMPLATES_ONLY', False)
     NUCLEI_CUSTOM_TEMPLATES = settings.get('NUCLEI_CUSTOM_TEMPLATES', [])
     NUCLEI_SELECTED_CUSTOM_TEMPLATES = settings.get('NUCLEI_SELECTED_CUSTOM_TEMPLATES', [])
@@ -274,9 +353,11 @@ def run_vuln_scan(recon_data: dict, output_file: Path = None, settings: dict = N
             else:
                 print(f"[!][Nuclei] resource_enum not found - run resource_enum before vuln_scan for DAST mode")
     
-        print(f"[*][Nuclei] Unique Hostnames: {len(hostnames)}")
-        print(f"[*][Nuclei] Unique IPs: {len(ips)}")
-        print(f"[*][Nuclei] Base URLs: {len(target_urls)}")
+        # Break down what will actually be scanned (target_urls is the real list)
+        ip_target_count = sum(1 for u in target_urls if _url_host_is_ip(u))
+        host_target_count = len(target_urls) - ip_target_count
+        print(f"[*][Nuclei] Hostnames discovered: {len(hostnames)} | IPs discovered: {len(ips)}")
+        print(f"[*][Nuclei] Targets to scan: {len(target_urls)} URLs ({host_target_count} hostname-based, {ip_target_count} IP-based)")
         if NUCLEI_DAST_MODE and dast_urls:
             print(f"[*][Nuclei] DAST URLs (with params): {len(dast_urls)}")
         print(f"[*][Nuclei] Scan IPs: {'YES' if NUCLEI_SCAN_ALL_IPS else 'NO (hostnames only)'}")
@@ -338,27 +419,49 @@ def run_vuln_scan(recon_data: dict, output_file: Path = None, settings: dict = N
         nuclei_temp_dir = Path("/tmp/redamon/.nuclei_temp")
         nuclei_temp_dir.mkdir(parents=True, exist_ok=True)
     
-        # Create targets file
-        # For DAST mode with discovered URLs, use those; otherwise use base URLs
-        scan_urls = target_urls
-        if NUCLEI_DAST_MODE and dast_urls:
-            # Combine DAST URLs with base URLs for comprehensive coverage
-            scan_urls = list(set(target_urls + dast_urls))
-            print(f"[*][Nuclei] DAST scan will test {len(dast_urls)} URLs with parameters + {len(target_urls)} base URLs")
-    
-        targets_file = str(nuclei_temp_dir / "targets.txt")
-        with open(targets_file, 'w') as f:
-            for url in scan_urls:
+        # Two-pass design:
+        #   Pass A (DETECTION) — always runs when Nuclei is enabled. Honours all
+        #     user-configured templates, tags, custom templates. Targets the
+        #     full base URL set.
+        #   Pass B (DAST) — only when NUCLEI_DAST_MODE is on AND we have URLs
+        #     with parameters from resource_enum. Forces -dast and ignores
+        #     tags/templates filters (they would empty-intersect with the DAST
+        #     template set). Targets the parameterized URLs only.
+        do_dast_pass = NUCLEI_DAST_MODE and bool(dast_urls)
+        if NUCLEI_DAST_MODE and not dast_urls:
+            print(f"[!][Nuclei] DAST pass skipped (no parameterized URLs available); detection pass still runs")
+
+        # Detection pass targets
+        detection_targets_file = str(nuclei_temp_dir / "targets_detection.txt")
+        with open(detection_targets_file, 'w') as f:
+            for url in target_urls:
                 f.write(url + "\n")
-    
-        # Output file path
-        nuclei_output_file = str(nuclei_temp_dir / "nuclei_output.jsonl")
-    
+        detection_output_file = str(nuclei_temp_dir / "nuclei_detection.jsonl")
+
+        # DAST pass targets (parameterized URLs only)
+        dast_targets_file = None
+        dast_output_file = None
+        if do_dast_pass:
+            dast_targets_file = str(nuclei_temp_dir / "targets_dast.txt")
+            with open(dast_targets_file, 'w') as f:
+                for url in dast_urls:
+                    f.write(url + "\n")
+            dast_output_file = str(nuclei_temp_dir / "nuclei_dast.jsonl")
+            print(f"[*][Nuclei] Two-pass plan: DETECTION on {len(target_urls)} URLs + DAST on {len(dast_urls)} parameterized URLs")
+        else:
+            print(f"[*][Nuclei] Single-pass plan: DETECTION on {len(target_urls)} URLs")
+
+        # scan_urls is the union for reporting/metadata
+        scan_urls = sorted(set(target_urls + (dast_urls if do_dast_pass else [])))
+
         try:
-            # Build and run nuclei command
-            cmd = build_nuclei_command(
-                targets_file=targets_file,
-                output_file=nuclei_output_file,
+            findings = []
+            false_positives_filtered = []
+
+            # ---- Pass A: DETECTION ----
+            detection_cmd = build_nuclei_command(
+                targets_file=detection_targets_file,
+                output_file=detection_output_file,
                 docker_image=NUCLEI_DOCKER_IMAGE,
                 use_proxy=use_proxy,
                 severity=NUCLEI_SEVERITY,
@@ -373,7 +476,7 @@ def run_vuln_scan(recon_data: dict, output_file: Path = None, settings: dict = N
                 concurrency=NUCLEI_CONCURRENCY,
                 timeout=NUCLEI_TIMEOUT,
                 retries=NUCLEI_RETRIES,
-                dast_mode=NUCLEI_DAST_MODE,
+                dast_mode=False,
                 new_templates_only=NUCLEI_NEW_TEMPLATES_ONLY,
                 headless=NUCLEI_HEADLESS,
                 system_resolvers=NUCLEI_SYSTEM_RESOLVERS,
@@ -381,66 +484,48 @@ def run_vuln_scan(recon_data: dict, output_file: Path = None, settings: dict = N
                 max_redirects=NUCLEI_MAX_REDIRECTS,
                 interactsh=NUCLEI_INTERACTSH,
             )
-        
-            print(f"[*][Nuclei] Running nuclei scan [DOCKER]...")
-            print(f"[*][Nuclei] Command: {' '.join(cmd[:12])}...")
-        
-            # Run nuclei
+
             start_time = datetime.now()
-        
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+            d_findings, d_fps, d_duration, _ = _execute_nuclei_pass(
+                detection_cmd, detection_output_file, label="DETECTION"
             )
-        
-            # Monitor progress
-            stdout, stderr = process.communicate()
-        
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
-        
-            if process.returncode != 0 and stderr:
-                # Filter out common non-error messages
-                error_lines = [l for l in stderr.split('\n') if l and 'WRN' not in l and 'INF' not in l]
-                if error_lines:
-                    print(f"[!][Nuclei] Nuclei warnings: {error_lines[0][:100]}")
-        
-            # Parse results and filter false positives
-            findings = []
-            false_positives_filtered = []
-        
-            if Path(nuclei_output_file).exists():
-                with open(nuclei_output_file, 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line:
-                            try:
-                                raw_finding = json.loads(line)
-                            
-                                # Check for false positives before parsing
-                                is_fp, fp_reason = is_false_positive(raw_finding)
-                                if is_fp:
-                                    # Log the filtered false positive
-                                    template_id = raw_finding.get("template-id", "unknown")
-                                    matched_at = raw_finding.get("matched-at", "unknown")
-                                    false_positives_filtered.append({
-                                        "template_id": template_id,
-                                        "matched_at": matched_at,
-                                        "reason": fp_reason
-                                    })
-                                    continue  # Skip this finding
-                            
-                                parsed = parse_nuclei_finding(raw_finding)
-                                findings.append(parsed)
-                            except json.JSONDecodeError:
-                                continue
-        
+            findings.extend(d_findings)
+            false_positives_filtered.extend(d_fps)
+
+            # ---- Pass B: DAST (additive) ----
+            dast_duration = 0
+            if do_dast_pass:
+                dast_cmd = build_nuclei_command(
+                    targets_file=dast_targets_file,
+                    output_file=dast_output_file,
+                    docker_image=NUCLEI_DOCKER_IMAGE,
+                    use_proxy=use_proxy,
+                    severity=NUCLEI_SEVERITY,
+                    rate_limit=NUCLEI_RATE_LIMIT,
+                    bulk_size=NUCLEI_BULK_SIZE,
+                    concurrency=NUCLEI_CONCURRENCY,
+                    timeout=NUCLEI_TIMEOUT,
+                    retries=NUCLEI_RETRIES,
+                    headless=NUCLEI_HEADLESS,
+                    system_resolvers=NUCLEI_SYSTEM_RESOLVERS,
+                    follow_redirects=NUCLEI_FOLLOW_REDIRECTS,
+                    max_redirects=NUCLEI_MAX_REDIRECTS,
+                    interactsh=NUCLEI_INTERACTSH,
+                    force_dast_pass=True,
+                )
+                b_findings, b_fps, b_duration, _ = _execute_nuclei_pass(
+                    dast_cmd, dast_output_file, label="DAST"
+                )
+                findings.extend(b_findings)
+                false_positives_filtered.extend(b_fps)
+                dast_duration = b_duration
+
+            duration = d_duration + dast_duration
+
             # Log filtered false positives
             if false_positives_filtered:
                 print(f"[*][Nuclei] Filtered {len(false_positives_filtered)} false positive(s):")
-                for fp in false_positives_filtered[:5]:  # Show first 5
+                for fp in false_positives_filtered[:5]:
                     print(f"[*][Nuclei]   - {fp['template_id']}: {fp['reason'][:60]}...")
                 if len(false_positives_filtered) > 5:
                     print(f"[*][Nuclei]   ... and {len(false_positives_filtered) - 5} more")
@@ -460,6 +545,7 @@ def run_vuln_scan(recon_data: dict, output_file: Path = None, settings: dict = N
                     "exclude_tags": NUCLEI_EXCLUDE_TAGS,
                     "rate_limit": NUCLEI_RATE_LIMIT,
                     "dast_mode": NUCLEI_DAST_MODE,
+                    "dast_pass_executed": do_dast_pass,
                     "dast_urls_discovered": len(dast_urls) if NUCLEI_DAST_MODE else 0,
                     "katana_crawl_depth": KATANA_DEPTH if NUCLEI_DAST_MODE else None,
                     "total_urls_scanned": len(scan_urls),
@@ -583,7 +669,10 @@ def run_vuln_scan(recon_data: dict, output_file: Path = None, settings: dict = N
             print(f"[+][Nuclei] Execution mode: DOCKER")
             if use_proxy:
                 print(f"[+][Nuclei] Anonymous mode: YES (via Tor)")
-            print(f"[+][Nuclei] URLs scanned: {len(target_urls)}")
+            if do_dast_pass:
+                print(f"[+][Nuclei] URLs scanned: {len(target_urls)} (detection) + {len(dast_urls)} (DAST)")
+            else:
+                print(f"[+][Nuclei] URLs scanned: {len(target_urls)}")
             print(f"[+][Nuclei] Total findings: {len(findings)}")
         
             # Vulnerability summary
@@ -645,22 +734,26 @@ def run_vuln_scan(recon_data: dict, output_file: Path = None, settings: dict = N
             print(f"{'=' * 70}")
 
         finally:
-            # Cleanup temporary files and directory
-            # Docker may create files as root, so we use Docker to clean up if needed
-            try:
-                Path(targets_file).unlink(missing_ok=True)
-            except PermissionError:
-                # File owned by root (from Docker), use docker to remove it
-                subprocess.run(["docker", "run", "--rm", "-v", f"{nuclei_temp_dir}:/cleanup",
-                              "alpine", "rm", "-f", f"/cleanup/{Path(targets_file).name}"],
-                             capture_output=True)
-
-            try:
-                Path(nuclei_output_file).unlink(missing_ok=True)
-            except PermissionError:
-                subprocess.run(["docker", "run", "--rm", "-v", f"{nuclei_temp_dir}:/cleanup",
-                              "alpine", "rm", "-f", f"/cleanup/{Path(nuclei_output_file).name}"],
-                             capture_output=True)
+            # Cleanup temporary files and directory.
+            # Docker may create output files as root, so fall back to a docker-based
+            # rm when a PermissionError is raised.
+            cleanup_paths = [
+                detection_targets_file,
+                detection_output_file,
+                dast_targets_file,
+                dast_output_file,
+            ]
+            for path_str in cleanup_paths:
+                if not path_str:
+                    continue
+                try:
+                    Path(path_str).unlink(missing_ok=True)
+                except PermissionError:
+                    subprocess.run(
+                        ["docker", "run", "--rm", "-v", f"{nuclei_temp_dir}:/cleanup",
+                         "alpine", "rm", "-f", f"/cleanup/{Path(path_str).name}"],
+                        capture_output=True,
+                    )
 
             try:
                 nuclei_temp_dir.rmdir()  # Only removes if empty

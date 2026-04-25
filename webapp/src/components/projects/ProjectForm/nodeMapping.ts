@@ -15,7 +15,7 @@ export const SECTION_INPUT_MAP: Record<string, string[]> = {
   ParamSpider:        ['Domain', 'Subdomain'],
   Kiterunner:         ['BaseURL'],
   Arjun:              ['BaseURL', 'Endpoint'],
-  Nuclei:             ['BaseURL', 'Endpoint', 'Technology', 'Domain'],
+  Nuclei:             ['BaseURL', 'Endpoint', 'Technology', 'Domain', 'Subdomain'],
   CveLookup:          ['Technology'],
   GvmScan:            ['IP', 'Port', 'Subdomain', 'Domain'],
   Github:             ['Domain'],

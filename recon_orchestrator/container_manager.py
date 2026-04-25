@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
@@ -822,9 +822,20 @@ class ContainerManager:
             log_queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
             loop = asyncio.get_running_loop()
 
+            # On reconnect, resume from the last timestamp we already emitted so
+            # the SSE client doesn't receive duplicate history. Docker's `since`
+            # is second-granular, so advance by 1us to avoid re-emitting the
+            # boundary line (timestamps we tracked are sub-second precise).
+            since_ts = None
+            if state.last_log_timestamp is not None:
+                since_ts = state.last_log_timestamp + timedelta(microseconds=1)
+
             def read_logs():
                 try:
-                    for line in container.logs(stream=True, follow=True, timestamps=True):
+                    log_stream_kwargs = {"stream": True, "follow": True, "timestamps": True}
+                    if since_ts is not None:
+                        log_stream_kwargs["since"] = since_ts
+                    for line in container.logs(**log_stream_kwargs):
                         asyncio.run_coroutine_threadsafe(
                             log_queue.put(line), loop
                         ).result(timeout=5)
@@ -874,6 +885,20 @@ class ContainerManager:
                                     pass
 
                         event = self._parse_log_line(log_text, current_phase, current_phase_num, timestamp=docker_ts)
+                        # Partial recon always runs a single tool/phase, so pin
+                        # phase_number to 1 regardless of which full-pipeline
+                        # pattern the line happens to match (e.g. NUCLEI => 5).
+                        event.phase_number = 1
+                        if event.is_phase_start:
+                            current_phase = event.phase
+                            current_phase_num = 1
+                        # Track the high-water mark so a reconnecting SSE client
+                        # resumes after this line instead of replaying history.
+                        if docker_ts is not None:
+                            if project_id in self.partial_recon_states and run_id in self.partial_recon_states[project_id]:
+                                cur = self.partial_recon_states[project_id][run_id].last_log_timestamp
+                                if cur is None or docker_ts > cur:
+                                    self.partial_recon_states[project_id][run_id].last_log_timestamp = docker_ts
                         yield event
 
                 except asyncio.TimeoutError:

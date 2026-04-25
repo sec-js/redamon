@@ -243,7 +243,26 @@ No changes needed:
 - Phase progress hidden for partial recon via `hidePhaseProgress`
 - Status shows `"Scanning: <phase>"` instead of `"Phase 1/1: <phase>"`
 
-### 9. Frontend: Section Header "Run partial recon" Button
+### 9. Frontend: Input/Output Logic Tooltip
+
+File: `webapp/src/components/projects/ProjectForm/WorkflowView/inputLogicTooltips.tsx`
+
+Every tool exposed via partial recon must have an entry in the `INPUT_LOGIC_TOOLTIPS` map. The tooltip is rendered automatically in two places:
+1. The project-form section header (merged under the existing graph-info icon).
+2. The partial recon modal, next to the "Input" label.
+
+**Each tooltip has two sections:**
+1. **"How input is generated"** — what graph nodes feed the scan, any priority/fallback chain, how custom user input from the modal merges in, and any bail conditions (when the scan refuses to start).
+2. **"How output transforms the graph"** — which nodes get created (real names: BaseURL, Endpoint, Vulnerability, etc.), which relationships (real names: HAS_ENDPOINT, RESOLVES_TO, etc.), and which existing nodes get enriched.
+
+**Rules:**
+- User-facing language only. Reference graph node and relationship names users see in the graph UI. **Never** mention internal Python/JS variable names, function names, file paths, JSON keys, or settings constants.
+- No em dashes (—).
+- Use the existing styled helpers (`sectionTitleStyle`, `paraStyle`, `codeStyle`, `listStyle`, `wrapperStyle`).
+- First section header is "How input is generated" (not "Final input").
+- Verify claims against the tool's `update_graph_from_*` mixin before writing the output section. If you claim a Vulnerability node is created, it must actually be created.
+
+### 10. Frontend: Section Header "Run partial recon" Button
 
 File: `webapp/src/components/projects/ProjectForm/sections/<ToolName>Section.tsx`
 

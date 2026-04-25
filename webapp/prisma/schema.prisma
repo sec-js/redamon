@@ -272,7 +272,7 @@ model Project {
   nucleiRetries               Int      @default(1) @map("nuclei_retries")
   nucleiTags                  String[] @default([]) @map("nuclei_tags")
   nucleiExcludeTags           String[] @default([]) @map("nuclei_exclude_tags")
-  nucleiDastMode              Boolean  @default(true) @map("nuclei_dast_mode")
+  nucleiDastMode              Boolean  @default(false) @map("nuclei_dast_mode")
   nucleiAutoUpdateTemplates   Boolean  @default(true) @map("nuclei_auto_update_templates")
   nucleiNewTemplatesOnly      Boolean  @default(false) @map("nuclei_new_templates_only")
   nucleiHeadless              Boolean  @default(false) @map("nuclei_headless")

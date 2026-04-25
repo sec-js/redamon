@@ -42,6 +42,8 @@ from recon.helpers import (
     is_docker_installed,
     is_docker_running,
     is_tor_running,
+    extract_targets_from_recon,
+    build_target_urls,
 )
 
 # Import from resource_enum helpers
@@ -283,40 +285,27 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
         else:
             print("[!][ResourceEnum] Tor not running, falling back to direct connection")
 
-    # Get target URLs from http_probe
-    http_probe_data = recon_data.get('http_probe', {})
-    target_urls = []
-    target_domains = set()
+    # Build target URLs as the UNION of every available source (deduplicated).
+    # Sources merged:
+    #   1. httpx-verified BaseURLs (http_probe.by_url)
+    #   2. http(s)://<sub> for any Subdomain whose host is NOT already covered
+    #      by source 1 — catches new subdomains discovered after httpx ran.
+    # Replaces the old cascade where the subdomain fallback was skipped entirely
+    # whenever httpx returned even a single URL.
+    ips, hostnames, _ = extract_targets_from_recon(recon_data)
+    target_urls = build_target_urls(
+        hostnames, ips, recon_data, scan_all_ips=False
+    )
 
-    by_url = http_probe_data.get('by_url', {})
-    for url, url_data in by_url.items():
-        status_code = url_data.get('status_code')
-        if status_code and status_code < 500:
-            target_urls.append(url)
-            # Extract domain for GAU
-            host = url_data.get('host', '')
+    # target_domains drives the GAU pass — needs the unique host set, not URLs.
+    target_domains = set()
+    for url in target_urls:
+        try:
+            host = urlparse(url).hostname
             if host:
                 target_domains.add(host)
-
-    if not target_urls:
-        # Fallback to DNS data
-        dns_data = recon_data.get('dns') or {}
-        domain = recon_data.get('domain', '')
-        
-        # Include root domain if it has DNS records
-        domain_dns = dns_data.get('domain', {})
-        if domain and domain_dns.get('has_records'):
-            target_urls.append(f"http://{domain}")
-            target_urls.append(f"https://{domain}")
-            target_domains.add(domain)
-        
-        # Include subdomains
-        subdomains = dns_data.get('subdomains', {})
-        for subdomain, sub_data in subdomains.items():
-            if sub_data.get('has_records'):
-                target_urls.append(f"http://{subdomain}")
-                target_urls.append(f"https://{subdomain}")
-                target_domains.add(subdomain)
+        except Exception:
+            pass
 
     if not target_urls:
         print("[!][ResourceEnum] No target URLs found")

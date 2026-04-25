@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Play, Loader2, ArrowRight, Upload, FileText, Trash2 } from 'lucide-react'
-import { Modal } from '@/components/ui'
+import { Play, Loader2, ArrowRight, Upload, FileText, Trash2, Info } from 'lucide-react'
+import { Modal, Tooltip } from '@/components/ui'
 import type { GraphInputs, PartialReconParams, UserTargets } from '@/lib/recon-types'
 import { SECTION_INPUT_MAP, SECTION_NODE_MAP, SECTION_ENRICH_MAP } from '../nodeMapping'
 import { WORKFLOW_TOOLS } from './workflowDefinition'
+import { INPUT_LOGIC_TOOLTIPS } from './inputLogicTooltips'
 
 interface PartialReconModalProps {
   isOpen: boolean
@@ -137,7 +138,8 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Secret, Endpoint, and JsReconFinding nodes are merged into the existing graph.',
   Nuclei:
     'Template-based vulnerability scanner detecting CVEs, misconfigurations, exposed panels, and web application vulnerabilities (SQLi, XSS, RCE). ' +
-    'Targets are loaded from the graph (BaseURLs + Endpoints from prior phases). ' +
+    'Targets are built as the UNION of every available source in the graph (deduplicated): Endpoints with parameters from resource_enum, BaseURLs verified by httpx, and http(s)://<sub> for any Subdomain whose host is not already covered by the first two sources — so newly discovered subdomains get scanned even before httpx has probed them. IPs are excluded by default (toggle "Scan All IPs" to include). ' +
+    'DAST mode is a filter, not an add-on: when enabled it loads ONLY templates with a fuzz: directive (~300 of ~8000) and SKIPS detection templates and custom detection templates. Use DAST-native tags (sqli, xss, ssrf) — detection-class tags (graphql, apollo, hasura, exposure) produce an empty set and the scan fatals. Most production scans should leave DAST off. ' +
     'You can also provide custom URLs below. ' +
     'Vulnerability, CVE, Endpoint, Parameter, MitreData, and Capec nodes are merged into the existing graph.',
   SubdomainTakeover:
@@ -550,7 +552,7 @@ export function PartialReconModal({
     || (isNmap && !loadingInputs && (graphInputs?.existing_ports_count ?? 0) === 0)
     || (isHttpx && !loadingInputs && (graphInputs?.existing_ports_count ?? 0) === 0 && (graphInputs?.existing_subdomains_count ?? 0) === 0)
     || (toolId === 'JsRecon' && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0 && (graphInputs?.existing_endpoints_count ?? 0) === 0 && uploadedJsFiles.length === 0)
-    || (isNuclei && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0 && (graphInputs?.existing_endpoints_count ?? 0) === 0)
+    || (isNuclei && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0 && (graphInputs?.existing_endpoints_count ?? 0) === 0 && (graphInputs?.existing_subdomains_count ?? 0) === 0)
     || (isGraphql && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0 && (graphInputs?.existing_endpoints_count ?? 0) === 0)
     || (isResourceEnum && !isNuclei && toolId !== 'JsRecon' && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0)
     || (isArjun && !loadingInputs && (graphInputs?.existing_baseurls_count ?? 0) === 0 && (graphInputs?.existing_endpoints_count ?? 0) === 0)
@@ -586,8 +588,13 @@ export function PartialReconModal({
             backgroundColor: 'var(--bg-secondary, #1e293b)',
             border: '1px solid var(--border-color, #334155)',
           }}>
-            <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#3b82f6', marginBottom: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#3b82f6', marginBottom: '8px' }}>
               Input
+              {INPUT_LOGIC_TOOLTIPS[toolId] && (
+                <Tooltip content={INPUT_LOGIC_TOOLTIPS[toolId]} position="bottom" delay={150} maxWidth={900}>
+                  <Info size={16} style={{ cursor: 'help', color: '#22c55e', transform: 'translateY(-1px)' }} />
+                </Tooltip>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
               {inputNodeTypes.map(nt => (
@@ -602,7 +609,7 @@ export function PartialReconModal({
                 : toolId === 'JsRecon'
                 ? `${domain || 'No domain'} (${graphInputs?.existing_baseurls_count ?? 0} BaseURLs, ${graphInputs?.existing_endpoints_count ?? 0} Endpoints${uploadedJsFiles.length ? `, ${uploadedJsFiles.length} uploaded` : ''})`
                 : isNuclei
-                ? `${domain || 'No domain'} (${graphInputs?.existing_baseurls_count ?? 0} BaseURLs, ${graphInputs?.existing_endpoints_count ?? 0} Endpoints)`
+                ? `${domain || 'No domain'} (${graphInputs?.existing_baseurls_count ?? 0} BaseURLs, ${graphInputs?.existing_endpoints_count ?? 0} Endpoints, ${graphInputs?.existing_subdomains_count ?? 0} Subdomains)`
                 : isGraphql
                 ? `${domain || 'No domain'} (${graphInputs?.existing_baseurls_count ?? 0} BaseURLs, ${graphInputs?.existing_endpoints_count ?? 0} Endpoints${graphInputs?.existing_graphql_endpoints_count ? `, ${graphInputs.existing_graphql_endpoints_count} already-flagged GraphQL` : ''})`
                 : isResourceEnum
@@ -764,7 +771,7 @@ export function PartialReconModal({
               : toolId === 'JsRecon'
               ? 'JS Recon requires URLs to analyze for JavaScript files. Provide custom URLs below or enable graph targets (which include existing BaseURLs + Endpoints).'
               : isNuclei
-              ? 'Nuclei requires URLs to scan. Provide custom URLs below or enable graph targets (which include existing BaseURLs + Endpoints from prior phases).'
+              ? 'Nuclei works best with BaseURLs/Endpoints from prior phases. With only Subdomains it falls back to scanning http:// and https:// on default ports. Provide custom URLs below or enable graph targets.'
               : `${toolId} requires URLs to crawl. Provide custom URLs below or enable graph targets (which include existing BaseURLs from Httpx).`}
           </div>
         )}

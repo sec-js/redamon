@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ChevronDown, Shield, Upload, Trash2, Loader2, FileText, Play } from 'lucide-react'
+import { ChevronDown, Shield, Upload, Trash2, Loader2, FileText, Play, AlertTriangle } from 'lucide-react'
 import { Toggle } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
@@ -464,15 +464,29 @@ export function NucleiSection({ data, updateField, onRun }: NucleiSectionProps) 
             </div>
             <div className={styles.toggleRow}>
               <div>
-                <span className={styles.toggleLabel}>DAST Mode</span>
-                <p className={styles.toggleDescription}>Active fuzzing for XSS, SQLi, RCE. More aggressive, may trigger alerts. Requires URLs with parameters</p>
-                <TimeEstimate estimate="+50-100% scan time (active fuzzing)" />
+                <span className={styles.toggleLabel}>Add DAST Pass</span>
+                <p className={styles.toggleDescription}>Runs a second nuclei pass with <code>-dast</code> on URLs with parameters (XSS, SQLi, SSTI, RCE fuzzing). Additive: your detection pass (CVEs, exposures, custom templates, tags) still runs first.</p>
+                <TimeEstimate estimate="+50-100% scan time (extra DAST pass)" />
               </div>
               <Toggle
                 checked={data.nucleiDastMode}
                 onChange={(checked) => updateField('nucleiDastMode', checked)}
               />
             </div>
+            {data.nucleiDastMode && (
+              <div className={styles.shodanWarning}>
+                <AlertTriangle size={14} />
+                <div>
+                  <strong>How the two passes work.</strong> Pass 1 (detection) runs your full configuration: severities, tags, custom templates, the whole ~8000-template corpus minus what you exclude. Pass 2 (DAST) runs only the ~250 templates under <code>dast/</code> with <code>-dast</code> forced on, and ignores tag/template filters because those filters would empty-intersect with the DAST set and fatal with <em>&ldquo;no templates provided for scan.&rdquo;</em>
+                  <br /><br />
+                  <strong>DAST pass needs parameterized URLs.</strong> Built-in DAST templates fuzz query parameters (path/header/cookie/body fuzzing exists since v3.2 but is rare in stock templates). If <code>resource_enum</code> hasn&rsquo;t produced any URLs containing <code>?param=value</code>, the DAST pass is skipped automatically and only the detection pass runs. Run Katana / Hakrawler first if you want DAST coverage.
+                  <br /><br />
+                  <strong>Tag and template filters apply to the detection pass only.</strong> Want to bias the detection pass toward GraphQL? Set Include Tags <code>graphql,apollo,hasura</code> as usual: it filters pass 1 only, the DAST pass still runs unfiltered against your parameterized URLs.
+                  <br /><br />
+                  <strong>Cost:</strong> roughly 2x scan time when DAST is on (the two passes can&rsquo;t share work). Findings from both passes are merged into a single report.
+                </div>
+              </div>
+            )}
           </div>
 
           <div className={styles.subSection}>

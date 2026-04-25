@@ -63,20 +63,34 @@ def build_nuclei_command(
     follow_redirects: bool = False,
     max_redirects: int = 0,
     interactsh: bool = True,
+    force_dast_pass: bool = False,
 ) -> List[str]:
     """
     Build nuclei Docker command with all configured parameters.
-    
+
     Args:
         targets_file: Path to file containing target URLs
         output_file: Path for JSON output
         docker_image: Nuclei Docker image to use
         use_proxy: Whether to use Tor proxy
+        force_dast_pass: When True, forces -dast and drops tag/template
+            filters that would otherwise empty-intersect with the DAST set
+            (built-in DAST templates carry tags like xss/sqli/ssti, not the
+            detection-class tags users typically configure).
         ... (configuration parameters)
-        
+
     Returns:
         Command as list of arguments
     """
+    if force_dast_pass:
+        dast_mode = True
+        templates = None
+        exclude_templates = None
+        custom_templates = None
+        selected_custom_templates = None
+        tags = None
+        exclude_tags = None
+        new_templates_only = False
     # Docker command with volume mounts
     # Convert container paths to host paths for sibling container volume mounts
     targets_host_path = get_host_path(str(Path(targets_file).parent))
@@ -108,6 +122,8 @@ def build_nuclei_command(
         "-silent",
         "-nc",
         "-duc",  # Disable automatic update check
+        "-stats",
+        "-stats-interval", "30",  # Progress heartbeat every 30s so long scans aren't silent
     ])
     
     # Severity filter

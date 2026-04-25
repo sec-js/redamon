@@ -272,17 +272,28 @@ def _build_port_scan_data_from_graph(domain: str, user_id: str, project_id: str)
 
 def _build_http_probe_data_from_graph(domain: str, user_id: str, project_id: str) -> dict:
     """
-    Query Neo4j to build the recon_data dict for Katana/Hakrawler partial recon.
+    Query Neo4j to build the recon_data dict for crawlers/fuzzers running in
+    partial recon (Katana, Hakrawler, FFuf, Kiterunner).
 
-    Returns a dict with 'http_probe' key containing by_url structure
-    (BaseURL -> metadata). Also populates 'domain' and 'subdomains' for
-    scope filtering in update_graph_from_resource_enum.
+    Populates:
+      - 'http_probe.by_url': BaseURL nodes (Source 2 of build_target_urls)
+      - 'dns.domain': apex Domain IPs + has_records (Source 3 fallback)
+      - 'dns.subdomains': every Subdomain with its IPs + has_records
+                          (Source 3: catches subs not yet probed by httpx)
+      - 'subdomains': flat list for scope filtering in graph updates
+
+    The DNS section enables the same union/dedup target-building used by
+    Nuclei: subdomains without a BaseURL still get scanned via fallback.
     """
     from graph_db import Neo4jClient
 
     recon_data = {
         "domain": domain,
         "subdomains": [],
+        "dns": {
+            "domain": {"ips": {"ipv4": [], "ipv6": []}, "has_records": False},
+            "subdomains": {},
+        },
         "http_probe": {
             "by_url": {},
         },
@@ -295,7 +306,45 @@ def _build_http_probe_data_from_graph(domain: str, user_id: str, project_id: str
 
         driver = graph_client.driver
         with driver.session() as session:
-            # Query all BaseURL nodes for this project
+            # 1) Apex Domain -> IP relationships (Source 3 fallback for the root)
+            result = session.run(
+                """
+                MATCH (d:Domain {name: $domain, user_id: $uid, project_id: $pid})
+                      -[:RESOLVES_TO]->(i:IP)
+                RETURN i.address AS address, i.version AS version
+                """,
+                domain=domain, uid=user_id, pid=project_id,
+            )
+            for record in result:
+                addr = record["address"]
+                bucket = _classify_ip(addr, record["version"])
+                recon_data["dns"]["domain"]["ips"][bucket].append(addr)
+            if (recon_data["dns"]["domain"]["ips"]["ipv4"]
+                    or recon_data["dns"]["domain"]["ips"]["ipv6"]):
+                recon_data["dns"]["domain"]["has_records"] = True
+
+            # 2) Subdomain -> IP relationships (Source 3 fallback for unprobed subs)
+            result = session.run(
+                """
+                MATCH (d:Domain {name: $domain, user_id: $uid, project_id: $pid})
+                      -[:HAS_SUBDOMAIN]->(s:Subdomain)
+                      -[:RESOLVES_TO]->(i:IP)
+                RETURN s.name AS subdomain, i.address AS address, i.version AS version
+                """,
+                domain=domain, uid=user_id, pid=project_id,
+            )
+            for record in result:
+                sub = record["subdomain"]
+                addr = record["address"]
+                bucket = _classify_ip(addr, record["version"])
+                if sub not in recon_data["dns"]["subdomains"]:
+                    recon_data["dns"]["subdomains"][sub] = {
+                        "ips": {"ipv4": [], "ipv6": []},
+                        "has_records": True,
+                    }
+                recon_data["dns"]["subdomains"][sub]["ips"][bucket].append(addr)
+
+            # 3) BaseURL nodes (Source 2: live URLs verified by httpx)
             result = session.run(
                 """
                 MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
@@ -317,7 +366,7 @@ def _build_http_probe_data_from_graph(domain: str, user_id: str, project_id: str
                     "content_type": record["content_type"] or "",
                 }
 
-            # Get subdomains for scope filtering
+            # 4) Flat subdomain list for graph-update scope filtering
             result = session.run(
                 """
                 MATCH (d:Domain {name: $domain, user_id: $uid, project_id: $pid})

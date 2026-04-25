@@ -10,6 +10,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from recon.partial_recon_modules.helpers import _is_valid_url, _is_valid_hostname
 from recon.partial_recon_modules.graph_builders import _build_http_probe_data_from_graph
 from recon.partial_recon_modules.user_inputs import _create_user_subdomains_in_graph
+from recon.helpers import build_target_urls, extract_targets_from_recon
 
 
 def run_katana(config: dict) -> None:
@@ -99,16 +100,25 @@ def run_katana(config: dict) -> None:
                     "content_type": "text/html",
                 }
 
-    # Build target_urls list from http_probe.by_url (same logic as resource_enum.py)
-    target_urls = []
+    # Build target URLs as the UNION of every available source (deduplicated):
+    #   - BaseURLs from httpx (verified live, scheme already chosen)
+    #   - http(s)://<sub> for any Subdomain not yet covered by a BaseURL
+    #   - Custom URLs already merged into http_probe.by_url upstream
+    # Replaces the old "BaseURLs only" logic where freshly-discovered subdomains
+    # were silently dropped until httpx ran again.
+    ips, hostnames, _ = extract_targets_from_recon(recon_data)
+    target_urls = build_target_urls(hostnames, ips, recon_data, scan_all_ips=False)
+
+    # target_domains is the unique-host set Katana needs for in-scope filtering.
     target_domains = set()
-    for url, url_data in recon_data["http_probe"]["by_url"].items():
-        status_code = url_data.get("status_code")
-        if status_code and int(status_code) < 500:
-            target_urls.append(url)
-            host = url_data.get("host", "")
+    from urllib.parse import urlparse
+    for url in target_urls:
+        try:
+            host = urlparse(url).hostname
             if host:
                 target_domains.add(host)
+        except Exception:
+            pass
 
     # Ensure all target hostnames are in subdomains list for graph scope filtering
     existing_subs = set(recon_data.get("subdomains", []))
@@ -118,8 +128,8 @@ def run_katana(config: dict) -> None:
     recon_data["subdomains"] = list(existing_subs)
 
     if not target_urls:
-        print("[!][Partial Recon] No URLs to crawl (graph has no BaseURLs and no valid user URLs provided).")
-        print("[!][Partial Recon] Run HTTP Probing (Httpx) first, or provide URLs manually.")
+        print("[!][Partial Recon] No URLs to crawl (graph has no BaseURLs, Subdomains, or DNS records).")
+        print("[!][Partial Recon] Run Subdomain Discovery or HTTP Probing first, or provide URLs manually.")
         sys.exit(1)
 
     print(f"[+][Partial Recon] Found {len(target_urls)} URLs to crawl")
@@ -362,18 +372,21 @@ def run_hakrawler(config: dict) -> None:
                     "content_type": "text/html",
                 }
 
-    # Build target_urls list from http_probe.by_url (same logic as resource_enum.py)
-    target_urls = []
+    # Union target-builder (see Katana for full rationale): BaseURLs ∪ uncovered
+    # Subdomains ∪ user URLs, deduplicated. Uncovered subs get both schemes.
+    ips, hostnames, _ = extract_targets_from_recon(recon_data)
+    target_urls = build_target_urls(hostnames, ips, recon_data, scan_all_ips=False)
+
     target_domains = set()
-    for url, url_data in recon_data["http_probe"]["by_url"].items():
-        status_code = url_data.get("status_code")
-        if status_code and int(status_code) < 500:
-            target_urls.append(url)
-            host = url_data.get("host", "")
+    from urllib.parse import urlparse
+    for url in target_urls:
+        try:
+            host = urlparse(url).hostname
             if host:
                 target_domains.add(host)
+        except Exception:
+            pass
 
-    # Ensure all target hostnames are in subdomains list for graph scope filtering
     existing_subs = set(recon_data.get("subdomains", []))
     for host in target_domains:
         if host not in existing_subs:
@@ -381,8 +394,8 @@ def run_hakrawler(config: dict) -> None:
     recon_data["subdomains"] = list(existing_subs)
 
     if not target_urls:
-        print("[!][Partial Recon] No URLs to crawl (graph has no BaseURLs and no valid user URLs provided).")
-        print("[!][Partial Recon] Run HTTP Probing (Httpx) first, or provide URLs manually.")
+        print("[!][Partial Recon] No URLs to crawl (graph has no BaseURLs, Subdomains, or DNS records).")
+        print("[!][Partial Recon] Run Subdomain Discovery or HTTP Probing first, or provide URLs manually.")
         sys.exit(1)
 
     print(f"[+][Partial Recon] Found {len(target_urls)} URLs to crawl")
@@ -624,19 +637,22 @@ def run_ffuf(config: dict) -> None:
                     "content_type": "text/html",
                 }
 
-    # Build target_urls list from http_probe.by_url (same logic as resource_enum.py)
-    target_urls = []
+    # Union target-builder: BaseURLs ∪ uncovered Subdomains ∪ user URLs (see
+    # Katana for full rationale). New subs get both schemes; httpx-covered hosts
+    # keep only the verified scheme.
+    ips, hostnames, _ = extract_targets_from_recon(recon_data)
+    target_urls = build_target_urls(hostnames, ips, recon_data, scan_all_ips=False)
+
     target_domains = set()
-    for url, url_data in recon_data["http_probe"]["by_url"].items():
-        status_code = url_data.get("status_code")
-        if status_code and int(status_code) < 500:
-            target_urls.append(url)
-            host = url_data.get("host", "")
+    from urllib.parse import urlparse
+    for url in target_urls:
+        try:
+            host = urlparse(url).hostname
             if host:
                 target_domains.add(host)
+        except Exception:
+            pass
 
-    # Ensure all target hostnames are in subdomains list for graph scope filtering
-    # (update_graph_from_resource_enum skips BaseURLs whose host is not in subdomains)
     existing_subs = set(recon_data.get("subdomains", []))
     for host in target_domains:
         if host not in existing_subs:
@@ -644,8 +660,8 @@ def run_ffuf(config: dict) -> None:
     recon_data["subdomains"] = list(existing_subs)
 
     if not target_urls:
-        print("[!][Partial Recon] No URLs to fuzz (graph has no BaseURLs and no valid user URLs provided).")
-        print("[!][Partial Recon] Run HTTP Probing (Httpx) first, or provide URLs manually.")
+        print("[!][Partial Recon] No URLs to fuzz (graph has no BaseURLs, Subdomains, or DNS records).")
+        print("[!][Partial Recon] Run Subdomain Discovery or HTTP Probing first, or provide URLs manually.")
         sys.exit(1)
 
     print(f"[+][Partial Recon] Found {len(target_urls)} URLs to fuzz")

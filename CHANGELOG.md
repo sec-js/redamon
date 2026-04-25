@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.2.1] - 2026-04-25
+
+### Fixed
+
+- **Target lists are now a union, not a cascade**, across Nuclei and the resource_enum chain (Katana, Hakrawler, FFuf, Kiterunner) in both global and partial recon. Previously a first-hit cascade would silently drop newly-discovered subdomains whenever httpx had returned any URL; now the list is `httpx BaseURLs ∪ resource_enum endpoints ∪ http(s)://<sub> for any subdomain not yet covered`, deduplicated with case-insensitive host matching
+- **IPv6 IPs** in target URLs now bracketed per RFC 3986 (`http://[::1]/`) instead of malformed `http://::1/`
+- **Nuclei JSON-format stats line** no longer leaks into "Nuclei warnings" on non-zero exits
+- **Partial-recon phase counter** pinned to `1/1` (was showing `5/1` because the full-pipeline phase pattern table assigned phase 5 to Nuclei)
+- **SSE log stream** resumes via Docker `since=` on reconnect; frontend dedup safety net catches any second-granular boundary slip
+
+### Changed
+
+- **`NUCLEI_DAST_MODE` default flipped to `false`** (Prisma + recon settings); UI now warns when DAST is enabled and explains it filters templates rather than adding them, with guidance on which tags work in DAST mode
+- **Nuclei progress heartbeat** via `-stats -stats-interval 30` so long scans emit progress every 30s instead of going silent; subprocess output streams line-by-line so the heartbeat reaches the container log in real time
+- **Workflow tooltips** rewritten to describe the union behavior (Nuclei, Katana, Hakrawler, FFuf, Kiterunner) and widened from 680px to 900px to fit the new explanations
+- **`_build_http_probe_data_from_graph`** extended with DNS data (apex Domain IPs, Subdomain IPs) so partial crawlers can run the same union as the global pipeline
+
+### Added
+
+- **54 new tests** (`recon/tests/test_target_helpers_union.py`) covering the union helper: unit, regression, contract, integration (real subprocess), invariants, IPv6 brackets, status-code boundaries, port handling, idempotency, non-mutation, stress at 1000 hostnames
+
+---
+
 ## [4.2.0] - 2026-04-21
 
 ### Added

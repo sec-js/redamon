@@ -15,6 +15,8 @@ interface TooltipProps {
   delay?: number
   /** Whether tooltip is disabled */
   disabled?: boolean
+  /** Override default max-width (CSS default is 260px) */
+  maxWidth?: number | string
 }
 
 interface Position {
@@ -28,6 +30,7 @@ export function Tooltip({
   position = 'top',
   delay = 200,
   disabled = false,
+  maxWidth,
 }: TooltipProps) {
   const [isVisible, setIsVisible] = useState(false)
   const [tooltipPosition, setTooltipPosition] = useState<Position>({ top: 0, left: 0 })
@@ -129,6 +132,7 @@ export function Tooltip({
             style={{
               top: tooltipPosition.top,
               left: tooltipPosition.left,
+              ...(maxWidth !== undefined ? { maxWidth } : {}),
             }}
             role="tooltip"
           >
