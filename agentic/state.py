@@ -32,11 +32,11 @@ ApprovalDecision = Literal["approve", "modify", "abort"]
 QuestionFormat = Literal["text", "single_choice", "multi_choice"]
 
 # Attack path types for dynamic routing
-# Known types: "cve_exploit", "brute_force_credential_guess", "phishing_social_engineering", "denial_of_service", "sql_injection", "xss"
-# Unclassified types: "<descriptive_term>-unclassified" (e.g., "ssrf-unclassified", "file_upload-unclassified")
+# Known types: "cve_exploit", "brute_force_credential_guess", "phishing_social_engineering", "denial_of_service", "sql_injection", "xss", "ssrf", "rce", "path_traversal"
+# Unclassified types: "<descriptive_term>-unclassified" (e.g., "file_upload-unclassified", "xxe-unclassified")
 AttackPathType = str  # Validated by AttackPathClassification.attack_path_type validator
 
-KNOWN_ATTACK_PATHS = {"cve_exploit", "brute_force_credential_guess", "phishing_social_engineering", "denial_of_service", "sql_injection", "xss"}
+KNOWN_ATTACK_PATHS = {"cve_exploit", "brute_force_credential_guess", "phishing_social_engineering", "denial_of_service", "sql_injection", "xss", "ssrf", "rce", "path_traversal"}
 _UNCLASSIFIED_RE = re.compile(r'^[a-z][a-z0-9_]*-unclassified$')
 
 
@@ -517,7 +517,7 @@ class AttackPathClassification(BaseModel):
         description="Required phase for this request: 'informational' for recon, 'exploitation' for attacks"
     )
     attack_path_type: str = Field(
-        description="The classified attack path type: 'cve_exploit', 'brute_force_credential_guess', 'phishing_social_engineering', 'denial_of_service', or '<term>-unclassified'"
+        description="The classified attack path type: 'cve_exploit', 'brute_force_credential_guess', 'phishing_social_engineering', 'denial_of_service', 'sql_injection', 'xss', 'ssrf', 'rce', 'path_traversal', 'user_skill:<id>', or '<term>-unclassified'"
     )
     secondary_attack_path: Optional[str] = Field(
         default=None,
@@ -557,8 +557,8 @@ class AttackPathClassification(BaseModel):
         if _UNCLASSIFIED_RE.match(v):
             return v
         raise ValueError(
-            f"attack_path_type must be 'cve_exploit', 'brute_force_credential_guess', "
-            f"'phishing_social_engineering', 'user_skill:<id>', or match '<term>-unclassified' pattern. Got: '{v}'"
+            f"attack_path_type must be one of {sorted(KNOWN_ATTACK_PATHS)}, "
+            f"'user_skill:<id>', or match '<term>-unclassified' pattern. Got: '{v}'"
         )
 
 

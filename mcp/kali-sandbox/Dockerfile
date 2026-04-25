@@ -19,8 +19,11 @@ RUN echo "deb http://kali.download/kali kali-rolling main contrib non-free non-f
 # Allow HTTPS→HTTP redirects (Kali CDN sometimes redirects to http mirrors)
 RUN echo 'Acquire::https::Redirect::Allowed "true";' > /etc/apt/apt.conf.d/99allow-redirect
 
-# Update and install penetration testing tools
-RUN apt-get install -y --fix-missing \
+# Update and install penetration testing tools.
+# `apt-get update` is repeated here (same layer as install) because Kali rolling
+# rotates package versions frequently; a stale list cached from an earlier layer
+# leads to 404s on .deb fetches even minutes later.
+RUN apt-get update && apt-get install -y --fix-missing \
     # Core tools
     curl \
     wget \
@@ -157,6 +160,12 @@ RUN retry go install -v github.com/owasp-amass/amass/v4/...@master
 # Source: https://github.com/lc/gau (MIT)
 RUN retry go install -v github.com/lc/gau/v2/cmd/gau@latest
 
+# Install subzy: subdomain takeover fingerprint scanner.
+# Maintained fingerprint corpus (90+ providers) sharper than httpx -td banks for
+# unclaimed-resource detection. Source: https://github.com/PentestPad/subzy (MIT).
+# Used by the Subdomain Takeover community skill.
+RUN retry go install -v github.com/PentestPad/subzy@latest
+
 # Update nuclei templates
 RUN nuclei -update-templates || true
 
@@ -287,6 +296,34 @@ RUN retry git clone --depth 1 https://github.com/vladko312/SSTImap.git /opt/ssti
     && pip install --no-cache-dir -r /opt/sstimap/requirements.txt \
     && chmod +x /opt/sstimap/sstimap.py \
     && ln -s /opt/sstimap/sstimap.py /usr/local/bin/sstimap
+
+# tplmap: SSTI scanner that complements SSTImap by covering Smarty and Velocity
+# engines that the SSTImap plugin set does not currently fingerprint.
+# Source: https://github.com/epinna/tplmap (GPL-3.0). Lightly maintained but the
+# core engine runs on Python 3. Pinned deps are old, so install into an isolated
+# venv to avoid clashes with /opt/venv. Failures during the pinned-requirements
+# install are non-fatal: the wrapper still launches the tool with relaxed deps,
+# and the SSTI community skill documents an SSTImap-only fallback.
+RUN retry git clone --depth 1 https://github.com/epinna/tplmap.git /opt/tplmap \
+    && python3 -m venv /opt/tplmap/venv \
+    && /opt/tplmap/venv/bin/pip install --no-cache-dir requests pysocks \
+       || echo "WARNING: tplmap base deps install hit issues; tplmap may be degraded" \
+    && (/opt/tplmap/venv/bin/pip install --no-cache-dir -r /opt/tplmap/requirements.txt \
+        || echo "WARNING: tplmap pinned requirements failed; falling back to base deps") \
+    && chmod +x /opt/tplmap/tplmap.py \
+    && printf '#!/bin/sh\nexec /opt/tplmap/venv/bin/python /opt/tplmap/tplmap.py "$@"\n' \
+       > /usr/local/bin/tplmap \
+    && chmod +x /usr/local/bin/tplmap
+
+# phpggc: PHP gadget-chain generator for unserialize/PHAR exploitation
+# Source: https://github.com/ambionics/phpggc (Apache-2.0). Used by the
+# Insecure Deserialization community skill (PHP track). Requires php-cli.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends php-cli \
+    && rm -rf /var/lib/apt/lists/* \
+    && retry git clone --depth 1 https://github.com/ambionics/phpggc.git /opt/phpggc \
+    && chmod +x /opt/phpggc/phpggc \
+    && ln -s /opt/phpggc/phpggc /usr/local/bin/phpggc
 
 # Ensure ProjectDiscovery Go httpx wins over Python httpx CLI wrapper in PATH
 RUN ln -sf /root/go/bin/httpx /opt/venv/bin/httpx

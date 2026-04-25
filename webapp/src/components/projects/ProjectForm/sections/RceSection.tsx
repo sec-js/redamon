@@ -10,26 +10,48 @@ interface RceSectionProps {
   updateField: <K extends keyof FormData>(field: K, value: FormData[K]) => void
 }
 
+const ROW_STYLE: React.CSSProperties = {
+  marginBottom: 'var(--space-4)',
+}
+
+const GROUP_HEADER_STYLE: React.CSSProperties = {
+  fontSize: 'var(--text-sm)',
+  fontWeight: 'var(--font-semibold)',
+  color: 'var(--text-primary)',
+  marginTop: 'var(--space-5)',
+  marginBottom: 'var(--space-3)',
+  paddingBottom: 'var(--space-2)',
+  borderBottom: '1px solid var(--border-subtle, var(--border-default))',
+}
+
+const FIRST_GROUP_HEADER_STYLE: React.CSSProperties = {
+  ...GROUP_HEADER_STYLE,
+  marginTop: 'var(--space-3)',
+}
+
+const CHECKBOX_LABEL_STYLE: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 'var(--space-2)',
+}
+
 export function RceSection({ data, updateField }: RceSectionProps) {
   return (
     <div style={{ padding: 'var(--space-3) var(--space-4)' }}>
-      <p className={styles.sectionDescription}>
+      <p className={styles.sectionDescription} style={{ marginBottom: 'var(--space-4)' }}>
         Configure how the agent tests for RCE / command injection. Disable sub-workflows you don&apos;t want
         injected into the prompt and gate destructive payloads behind the explicit aggressive toggle.
       </p>
 
-      <h3 className={styles.fieldLabel} style={{ marginTop: 'var(--space-3)' }}>
-        Sub-workflow injection
-      </h3>
+      <h3 style={FIRST_GROUP_HEADER_STYLE}>Sub-workflow injection</h3>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
-          <label className={styles.fieldLabel}>
+          <label className={styles.fieldLabel} style={CHECKBOX_LABEL_STYLE}>
             <input
               type="checkbox"
               checked={data.rceOobCallbackEnabled ?? true}
               onChange={(e) => updateField('rceOobCallbackEnabled', e.target.checked)}
-              style={{ marginRight: '8px' }}
             />
             OOB callback workflow (interactsh)
           </label>
@@ -40,14 +62,13 @@ export function RceSection({ data, updateField }: RceSectionProps) {
         </div>
       </div>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
-          <label className={styles.fieldLabel}>
+          <label className={styles.fieldLabel} style={CHECKBOX_LABEL_STYLE}>
             <input
               type="checkbox"
               checked={data.rceDeserializationEnabled ?? true}
               onChange={(e) => updateField('rceDeserializationEnabled', e.target.checked)}
-              style={{ marginRight: '8px' }}
             />
             Deserialization gadget workflow (ysoserial)
           </label>
@@ -59,14 +80,13 @@ export function RceSection({ data, updateField }: RceSectionProps) {
         </div>
       </div>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
-          <label className={styles.fieldLabel}>
+          <label className={styles.fieldLabel} style={CHECKBOX_LABEL_STYLE}>
             <input
               type="checkbox"
               checked={data.rceAggressivePayloads ?? false}
               onChange={(e) => updateField('rceAggressivePayloads', e.target.checked)}
-              style={{ marginRight: '8px' }}
             />
             Aggressive payloads (file write, web shells, container escape)
           </label>

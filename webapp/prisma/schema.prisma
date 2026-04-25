@@ -695,8 +695,16 @@ model Project {
   rceDeserializationEnabled             Boolean  @default(true) @map("rce_deserialization_enabled")
   rceAggressivePayloads                 Boolean  @default(false) @map("rce_aggressive_payloads")
 
+  // ========== PATH TRAVERSAL / LFI / RFI SETTINGS ==========
+  pathTraversalOobCallbackEnabled       Boolean  @default(true)  @map("path_traversal_oob_callback_enabled")
+  pathTraversalPhpWrappersEnabled       Boolean  @default(true)  @map("path_traversal_php_wrappers_enabled")
+  pathTraversalArchiveExtractionEnabled Boolean  @default(false) @map("path_traversal_archive_extraction_enabled")
+  pathTraversalPayloadReferenceEnabled  Boolean  @default(true)  @map("path_traversal_payload_reference_enabled")
+  pathTraversalRequestTimeout           Int      @default(10)    @map("path_traversal_request_timeout")
+  pathTraversalOobProvider              String   @default("oast.fun") @map("path_traversal_oob_provider")
+
   // ========== ATTACK SKILL CONFIG ==========
-  attackSkillConfig                    Json     @default("{\"builtIn\":{\"cve_exploit\":true,\"brute_force_credential_guess\":true,\"phishing_social_engineering\":true,\"denial_of_service\":true,\"sql_injection\":true,\"xss\":true,\"ssrf\":false,\"rce\":true},\"user\":{}}") @map("attack_skill_config")
+  attackSkillConfig                    Json     @default("{\"builtIn\":{\"cve_exploit\":true,\"brute_force_credential_guess\":true,\"phishing_social_engineering\":true,\"denial_of_service\":true,\"sql_injection\":true,\"xss\":true,\"ssrf\":true,\"rce\":true,\"path_traversal\":true},\"user\":{}}") @map("attack_skill_config")
 
   // ========== CYPHERFIX SETTINGS ==========
   cypherfixGithubToken              String   @default("") @map("cypherfix_github_token")

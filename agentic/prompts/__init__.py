@@ -99,6 +99,15 @@ from .rce_prompts import (
     RCE_PAYLOAD_REFERENCE,
 )
 
+# Re-export from Path Traversal / LFI / RFI prompts
+from .path_traversal_prompts import (
+    PATH_TRAVERSAL_TOOLS,
+    PATH_TRAVERSAL_PHP_WRAPPERS,
+    PATH_TRAVERSAL_OOB_WORKFLOW,
+    PATH_TRAVERSAL_ARCHIVE_EXTRACTION,
+    PATH_TRAVERSAL_PAYLOAD_REFERENCE,
+)
+
 # Re-export from unclassified attack path prompts
 from .unclassified_prompts import UNCLASSIFIED_EXPLOIT_TOOLS
 
@@ -368,6 +377,31 @@ def get_phase_tools(
             if ssrf_payref_enabled:
                 parts.append(SSRF_PAYLOAD_REFERENCE)
             return True
+        elif (attack_path_type == "path_traversal"
+                and "path_traversal" in enabled_builtins
+                and "execute_curl" in allowed_tools):
+            pt_oob_enabled = get_setting('PATH_TRAVERSAL_OOB_CALLBACK_ENABLED', True)
+            pt_php_enabled = get_setting('PATH_TRAVERSAL_PHP_WRAPPERS_ENABLED', True)
+            pt_archive_enabled = get_setting('PATH_TRAVERSAL_ARCHIVE_EXTRACTION_ENABLED', False)
+            pt_payref_enabled = get_setting('PATH_TRAVERSAL_PAYLOAD_REFERENCE_ENABLED', True)
+            pt_settings = {
+                'path_traversal_oob_callback_enabled': pt_oob_enabled,
+                'path_traversal_php_wrappers_enabled': pt_php_enabled,
+                'path_traversal_archive_extraction_enabled': pt_archive_enabled,
+                'path_traversal_payload_reference_enabled': pt_payref_enabled,
+                'path_traversal_request_timeout': get_setting('PATH_TRAVERSAL_REQUEST_TIMEOUT', 10),
+                'path_traversal_oob_provider': get_setting('PATH_TRAVERSAL_OOB_PROVIDER', 'oast.fun'),
+            }
+            parts.append(PATH_TRAVERSAL_TOOLS.format(**pt_settings))
+            if pt_php_enabled:
+                parts.append(PATH_TRAVERSAL_PHP_WRAPPERS)
+            if pt_oob_enabled and "kali_shell" in allowed_tools:
+                parts.append(PATH_TRAVERSAL_OOB_WORKFLOW)
+            if pt_archive_enabled and "execute_code" in allowed_tools:
+                parts.append(PATH_TRAVERSAL_ARCHIVE_EXTRACTION)
+            if pt_payref_enabled:
+                parts.append(PATH_TRAVERSAL_PAYLOAD_REFERENCE)
+            return True
         elif (attack_path_type == "rce"
                 and "rce" in enabled_builtins
                 and "kali_shell" in allowed_tools):
@@ -524,6 +558,12 @@ __all__ = [
     "RCE_OOB_WORKFLOW",
     "RCE_DESERIALIZATION_WORKFLOW",
     "RCE_PAYLOAD_REFERENCE",
+    # Path Traversal / LFI / RFI
+    "PATH_TRAVERSAL_TOOLS",
+    "PATH_TRAVERSAL_PHP_WRAPPERS",
+    "PATH_TRAVERSAL_OOB_WORKFLOW",
+    "PATH_TRAVERSAL_ARCHIVE_EXTRACTION",
+    "PATH_TRAVERSAL_PAYLOAD_REFERENCE",
     # Unclassified attack path
     "UNCLASSIFIED_EXPLOIT_TOOLS",
     # Post-exploitation

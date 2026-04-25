@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/samugit83/redamon/stargazers"><img height="24" src="https://img.shields.io/github/stars/samugit83/redamon?style=flat&color=2E8B57&label=Stars" alt="GitHub Stars"/></a>
-  <img height="24" src="https://img.shields.io/badge/v4.2.1-release-2E8B57?style=flat" alt="Version 4.2.1"/>
+  <img height="24" src="https://img.shields.io/badge/v4.2.2-release-2E8B57?style=flat" alt="Version 4.2.2"/>
   <img height="24" src="https://img.shields.io/badge/WARNING-SECURITY%20TOOL-B22222?style=flat" alt="Security Tool Warning"/>
   <img height="24" src="https://img.shields.io/badge/LICENSE-MIT-4169A1?style=flat" alt="MIT License"/>
   <img height="24" src="https://img.shields.io/badge/END--TO--END-PIPELINE-A01025?style=flat" alt="End-to-End Pipeline"/>
@@ -535,7 +535,7 @@ Two-agent pipeline: a **Triage Agent** runs 9 hardcoded Cypher queries then uses
 
 ### Agent Skills
 
-An **LLM-powered Intent Router** classifies user requests into agent skills: CVE (MSF), SQL Injection, Credential Testing, Social Engineering, Availability Testing, or custom user-defined skills uploaded as Markdown files. Ready-to-use **[community skills](agentic/community-skills/)** are available for API testing, XSS, SQLi, and SSRF -- download the `.md` file and upload it via **Global Settings > Agent Skills** to activate it for your user. You can also [contribute your own](https://github.com/samugit83/redamon/wiki/Agent-Skills#share-your-skills-with-the-community) by opening a PR.
+An **LLM-powered Intent Router** classifies user requests into agent skills: CVE (MSF), SQL Injection, XSS, SSRF, RCE, Path Traversal / LFI / RFI, Credential Testing, Social Engineering, Availability Testing, or custom user-defined skills uploaded as Markdown files. Ready-to-use **[community skills](agentic/community-skills/)** ship for API testing, XSS, SQLi, XXE, BFLA, SSTI, IDOR / BOLA, insecure deserialization, mass assignment, subdomain takeover, and insecure file uploads -- download the `.md` file and upload it via **Global Settings > Agent Skills** to activate it for your user. You can also [contribute your own](https://github.com/samugit83/redamon/wiki/Agent-Skills#share-your-skills-with-the-community) by opening a PR.
 
 > **[Wiki: Agent Skills](https://github.com/samugit83/redamon/wiki/Agent-Skills)** | **[Community Skills](agentic/community-skills/)**
 

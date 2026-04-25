@@ -482,11 +482,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         try {
           const result = await session.run(
             `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
-             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)-[:RESOLVES_TO]->(i:IP)-[:HAS_PORT]->(p:Port)
+             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)
+             WITH d, collect(DISTINCT s.name) AS subdomains
+             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(:Subdomain)-[:RESOLVES_TO]->(i:IP)-[:HAS_PORT]->(p:Port)
              OPTIONAL MATCH (d)-[:RESOLVES_TO]->(di:IP)-[:HAS_PORT]->(dp:Port)
              OPTIONAL MATCH (p)-[:HAS_SERVICE]->(:Service)-[:SERVES_URL]->(bu:BaseURL)
              OPTIONAL MATCH (dp)-[:HAS_SERVICE]->(:Service)-[:SERVES_URL]->(dbu:BaseURL)
-             WITH d, collect(DISTINCT s.name) AS subdomains,
+             WITH d, subdomains,
                   count(DISTINCT i) + count(DISTINCT di) AS ipCount,
                   count(DISTINCT p) + count(DISTINCT dp) AS portCount,
                   count(DISTINCT bu) + count(DISTINCT dbu) AS baseurlCount
@@ -526,16 +528,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         try {
           const result = await session.run(
             `OPTIONAL MATCH (d:Domain {user_id: $uid, project_id: $pid})
-             WITH d
+             OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)
+             WITH d, count(DISTINCT s) AS subCount
              OPTIONAL MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
-             WITH d, collect(DISTINCT b.url) AS baseurls
+             WITH d, subCount, collect(DISTINCT b.url) AS baseurls
              OPTIONAL MATCH (e:Endpoint {user_id: $uid, project_id: $pid})
-             WITH d, baseurls, count(DISTINCT e) AS endpointCount
-             RETURN d.name AS domain, baseurls, size(baseurls) AS baseurlCount, endpointCount`,
+             WITH d, subCount, baseurls, count(DISTINCT e) AS endpointCount
+             RETURN d.name AS domain, subCount, baseurls, size(baseurls) AS baseurlCount, endpointCount`,
             { uid: project.userId, pid: projectId }
           )
           const record = result.records[0]
           const domain = record?.get('domain') || null
+          const subCount = record?.get('subCount')?.toNumber?.() ?? record?.get('subCount') ?? 0
           const baseurls: string[] = record?.get('baseurls') || []
           const baseurlCount = record?.get('baseurlCount')?.toNumber?.() ?? record?.get('baseurlCount') ?? 0
           const endpointCount = record?.get('endpointCount')?.toNumber?.() ?? record?.get('endpointCount') ?? 0
@@ -543,7 +547,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           if (domain) {
             return NextResponse.json({
               domain,
-              existing_subdomains_count: 0,
+              existing_subdomains_count: subCount,
               existing_baseurls: baseurls,
               existing_baseurls_count: baseurlCount,
               existing_endpoints_count: endpointCount,

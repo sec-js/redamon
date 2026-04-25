@@ -204,6 +204,14 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     'RCE_DESERIALIZATION_ENABLED': True,      # Include the Java/PHP/Python/Ruby deserialization gadget workflow (ysoserial) in the RCE prompt
     'RCE_AGGRESSIVE_PAYLOADS': False,         # If True, permit Step 7: file write, persistent web shells, container/k8s escape probes. Default False = read-only proofs only.
 
+    # Path Traversal / LFI / RFI Testing
+    'PATH_TRAVERSAL_OOB_CALLBACK_ENABLED': True,        # Allow interactsh OOB oracle for RFI / blind-LFI detection (sends probes via oast.fun)
+    'PATH_TRAVERSAL_PHP_WRAPPERS_ENABLED': True,        # Include PHP-specific wrapper / log-poisoning sub-section (php://filter, data://, expect://, zip://). Trim for non-PHP targets to reduce prompt bloat.
+    'PATH_TRAVERSAL_ARCHIVE_EXTRACTION_ENABLED': False, # Allow Zip Slip / TarSlip primitives that WRITE files outside the destination directory. Default False because writing to the target is state-mutating.
+    'PATH_TRAVERSAL_PAYLOAD_REFERENCE_ENABLED': True,   # Inject the encoding / bypass / wrapper payload reference (~3 KB extra). Disable for a leaner prompt.
+    'PATH_TRAVERSAL_REQUEST_TIMEOUT': 10,               # curl --max-time / --connect-timeout for traversal probes (seconds)
+    'PATH_TRAVERSAL_OOB_PROVIDER': 'oast.fun',          # interactsh-client server for RFI / OOB callbacks. Override when oast.fun is blocked.
+
     # Attack Skill Configuration
     'ATTACK_SKILL_CONFIG': {
         'builtIn': {
@@ -213,8 +221,9 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
             'denial_of_service': False,
             'sql_injection': True,
             'xss': True,
-            'ssrf': False,
+            'ssrf': True,
             'rce': True,
+            'path_traversal': True,
         },
         'user': {},
     },
@@ -360,6 +369,13 @@ def fetch_agent_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['RCE_OOB_CALLBACK_ENABLED'] = project.get('rceOobCallbackEnabled', DEFAULT_AGENT_SETTINGS['RCE_OOB_CALLBACK_ENABLED'])
     settings['RCE_DESERIALIZATION_ENABLED'] = project.get('rceDeserializationEnabled', DEFAULT_AGENT_SETTINGS['RCE_DESERIALIZATION_ENABLED'])
     settings['RCE_AGGRESSIVE_PAYLOADS'] = project.get('rceAggressivePayloads', DEFAULT_AGENT_SETTINGS['RCE_AGGRESSIVE_PAYLOADS'])
+    # Path Traversal / LFI / RFI
+    settings['PATH_TRAVERSAL_OOB_CALLBACK_ENABLED'] = project.get('pathTraversalOobCallbackEnabled', DEFAULT_AGENT_SETTINGS['PATH_TRAVERSAL_OOB_CALLBACK_ENABLED'])
+    settings['PATH_TRAVERSAL_PHP_WRAPPERS_ENABLED'] = project.get('pathTraversalPhpWrappersEnabled', DEFAULT_AGENT_SETTINGS['PATH_TRAVERSAL_PHP_WRAPPERS_ENABLED'])
+    settings['PATH_TRAVERSAL_ARCHIVE_EXTRACTION_ENABLED'] = project.get('pathTraversalArchiveExtractionEnabled', DEFAULT_AGENT_SETTINGS['PATH_TRAVERSAL_ARCHIVE_EXTRACTION_ENABLED'])
+    settings['PATH_TRAVERSAL_PAYLOAD_REFERENCE_ENABLED'] = project.get('pathTraversalPayloadReferenceEnabled', DEFAULT_AGENT_SETTINGS['PATH_TRAVERSAL_PAYLOAD_REFERENCE_ENABLED'])
+    settings['PATH_TRAVERSAL_REQUEST_TIMEOUT'] = project.get('pathTraversalRequestTimeout', DEFAULT_AGENT_SETTINGS['PATH_TRAVERSAL_REQUEST_TIMEOUT'])
+    settings['PATH_TRAVERSAL_OOB_PROVIDER'] = project.get('pathTraversalOobProvider', DEFAULT_AGENT_SETTINGS['PATH_TRAVERSAL_OOB_PROVIDER'])
     settings['ATTACK_SKILL_CONFIG'] = project.get('attackSkillConfig', DEFAULT_AGENT_SETTINGS['ATTACK_SKILL_CONFIG'])
     settings['USER_ATTACK_SKILLS'] = project.get('userAttackSkills', DEFAULT_AGENT_SETTINGS['USER_ATTACK_SKILLS'])
 

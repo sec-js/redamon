@@ -10,27 +10,49 @@ interface SsrfSectionProps {
   updateField: <K extends keyof FormData>(field: K, value: FormData[K]) => void
 }
 
+const ROW_STYLE: React.CSSProperties = {
+  marginBottom: 'var(--space-4)',
+}
+
+const GROUP_HEADER_STYLE: React.CSSProperties = {
+  fontSize: 'var(--text-sm)',
+  fontWeight: 'var(--font-semibold)',
+  color: 'var(--text-primary)',
+  marginTop: 'var(--space-5)',
+  marginBottom: 'var(--space-3)',
+  paddingBottom: 'var(--space-2)',
+  borderBottom: '1px solid var(--border-subtle, var(--border-default))',
+}
+
+const FIRST_GROUP_HEADER_STYLE: React.CSSProperties = {
+  ...GROUP_HEADER_STYLE,
+  marginTop: 'var(--space-3)',
+}
+
+const CHECKBOX_LABEL_STYLE: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 'var(--space-2)',
+}
+
 export function SsrfSection({ data, updateField }: SsrfSectionProps) {
   return (
     <div style={{ padding: 'var(--space-3) var(--space-4)' }}>
-      <p className={styles.sectionDescription}>
+      <p className={styles.sectionDescription} style={{ marginBottom: 'var(--space-4)' }}>
         Configure which SSRF sub-workflows to inject into the agent prompt and tune
         probe parameters. Disable sections you don&apos;t want the agent to use for this engagement.
       </p>
 
       {/* === Sub-workflow toggles === */}
-      <h3 className={styles.fieldLabel} style={{ marginTop: 'var(--space-3)' }}>
-        Sub-workflow injection
-      </h3>
+      <h3 style={FIRST_GROUP_HEADER_STYLE}>Sub-workflow injection</h3>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
-          <label className={styles.fieldLabel}>
+          <label className={styles.fieldLabel} style={CHECKBOX_LABEL_STYLE}>
             <input
               type="checkbox"
               checked={data.ssrfOobCallbackEnabled ?? true}
               onChange={(e) => updateField('ssrfOobCallbackEnabled', e.target.checked)}
-              style={{ marginRight: '8px' }}
             />
             OOB callback workflow (interactsh)
           </label>
@@ -40,14 +62,13 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
         </div>
       </div>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
-          <label className={styles.fieldLabel}>
+          <label className={styles.fieldLabel} style={CHECKBOX_LABEL_STYLE}>
             <input
               type="checkbox"
               checked={data.ssrfCloudMetadataEnabled ?? true}
               onChange={(e) => updateField('ssrfCloudMetadataEnabled', e.target.checked)}
-              style={{ marginRight: '8px' }}
             />
             Cloud metadata pivots
           </label>
@@ -57,14 +78,13 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
         </div>
       </div>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
-          <label className={styles.fieldLabel}>
+          <label className={styles.fieldLabel} style={CHECKBOX_LABEL_STYLE}>
             <input
               type="checkbox"
               checked={data.ssrfGopherEnabled ?? true}
               onChange={(e) => updateField('ssrfGopherEnabled', e.target.checked)}
-              style={{ marginRight: '8px' }}
             />
             Gopher / RCE-chain payloads
           </label>
@@ -74,14 +94,13 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
         </div>
       </div>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
-          <label className={styles.fieldLabel}>
+          <label className={styles.fieldLabel} style={CHECKBOX_LABEL_STYLE}>
             <input
               type="checkbox"
               checked={data.ssrfDnsRebindingEnabled ?? true}
               onChange={(e) => updateField('ssrfDnsRebindingEnabled', e.target.checked)}
-              style={{ marginRight: '8px' }}
             />
             DNS rebinding bypasses
           </label>
@@ -91,14 +110,13 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
         </div>
       </div>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
-          <label className={styles.fieldLabel}>
+          <label className={styles.fieldLabel} style={CHECKBOX_LABEL_STYLE}>
             <input
               type="checkbox"
               checked={data.ssrfPayloadReferenceEnabled ?? true}
               onChange={(e) => updateField('ssrfPayloadReferenceEnabled', e.target.checked)}
-              style={{ marginRight: '8px' }}
             />
             Advanced payload reference + HackerOne precedents
           </label>
@@ -109,11 +127,9 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
       </div>
 
       {/* === Probe parameters === */}
-      <h3 className={styles.fieldLabel} style={{ marginTop: 'var(--space-4)' }}>
-        Probe parameters
-      </h3>
+      <h3 style={GROUP_HEADER_STYLE}>Probe parameters</h3>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
           <label className={styles.fieldLabel}>Request Timeout (seconds)</label>
           <input
@@ -143,7 +159,7 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
         </div>
       </div>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
           <label className={styles.fieldLabel}>Port-scan Ports</label>
           <input
@@ -159,7 +175,7 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
         </div>
       </div>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
           <label className={styles.fieldLabel}>Internal CIDR Ranges</label>
           <input
@@ -175,7 +191,7 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
         </div>
       </div>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
           <label className={styles.fieldLabel}>Cloud Providers in Scope</label>
           <input
@@ -192,11 +208,9 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
       </div>
 
       {/* === Site-specific targets === */}
-      <h3 className={styles.fieldLabel} style={{ marginTop: 'var(--space-4)' }}>
-        Site-specific internal targets (optional)
-      </h3>
+      <h3 style={GROUP_HEADER_STYLE}>Site-specific internal targets (optional)</h3>
 
-      <div className={styles.fieldRow}>
+      <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
           <label className={styles.fieldLabel}>Custom Internal Targets</label>
           <textarea
